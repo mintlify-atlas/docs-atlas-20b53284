@@ -1,0 +1,338 @@
+---
+title: Segmentation & Intelligent Cropping
+description: SAM 2.1 adaptation for high-precision circuit trace extraction
+---
+
+CircuitVision employs a custom-adapted **Segment Anything Model 2.1 (SAM 2.1)** to extract conductive traces from circuit diagrams with **98.7% accuracy**. This phase is critical for topology analysis, as it provides the binary mask needed to identify connection paths between components.
+
+## Two-Stage Approach
+
+Segmentation occurs in two coordinated stages:
+
+<Steps>
+  <Step title="Intelligent YOLO-Based Cropping">
+    Analyzes component clusters to isolate the circuit region, removing background noise and improving downstream accuracy
+  </Step>
+  <Step title="SAM 2.1 Segmentation">
+    Applies fine-tuned SAM 2.1 to the cropped image, generating a high-resolution binary mask of conductive traces
+  </Step>
+</Steps>
+
+## Stage 1: Intelligent Cropping
+
+Before segmentation, CircuitVision performs adaptive cropping based on YOLO-detected components:
+
+```python
+# From src/analysis_pipeline.py:175-183
+image_cropped, bboxes_adjusted, crop_info = analyzer.crop_image_and_adjust_bboxes(
+    original_image,
+    deepcopy(bboxes_from_initial_detection),
+    padding=80
+)
+```
+
+### Clustering Algorithm
+
+The cropping logic (`src/circuit_analyzer.py:937-1028`) uses proximity-based clustering:
+
+```python
+# Dynamic threshold based on average component size
+avg_w = sum(b['xmax'] - b['xmin'] for b in components) / len(components)
+avg_h = sum(b['ymax'] - b['ymin'] for b in components) / len(components)
+avg_diag = np.sqrt(avg_w**2 + avg_h**2)
+
+clustering_threshold = max(int(avg_diag * 2.0), 30)  # Min 30px
+```
+
+**Algorithm Steps:**
+1. Calculate average component diagonal
+2. Set proximity threshold (2× diagonal, minimum 30px)
+3. Build adjacency graph of nearby components
+4. Find connected components using DFS
+5. Select largest cluster as main circuit
+6. Calculate bounding box around cluster
+7. Add padding (default 80px)
+
+<Info>
+The adaptive threshold ensures the algorithm works with circuits of varying scales—from small schematics to large PCB layouts.
+</Info>
+
+### Crop Window Calculation
+
+Once the main cluster is identified:
+
+```python
+# Find cluster extent
+xmin_cluster = min(bbox['xmin'] for bbox in main_cluster)
+ymin_cluster = min(bbox['ymin'] for bbox in main_cluster)
+xmax_cluster = max(bbox['xmax'] for bbox in main_cluster)
+ymax_cluster = max(bbox['ymax'] for bbox in main_cluster)
+
+# Apply padding and clamp to image bounds
+crop_window = (
+    max(0, xmin_cluster - padding),
+    max(0, ymin_cluster - padding),
+    min(image_width, xmax_cluster + padding),
+    min(image_height, ymax_cluster + padding)
+)
+```
+
+This removes extraneous margins, legends, and annotations while preserving the circuit context.
+
+<Note>
+If no clear cluster is detected (e.g., single-component circuits), the cropping step is skipped and the original image is used. This is logged in `crop_debug_info['reason_for_no_crop']`.
+</Note>
+
+## Stage 2: SAM 2.1 Segmentation
+
+CircuitVision uses a heavily modified SAM 2.1 architecture optimized for circuit diagrams.
+
+### Model Architecture
+
+The adapted model (`src/sam2_infer.py:191-219`) includes:
+
+**LoRA (Low-Rank Adaptation)**
+- Applied to 20+ transformer layers
+- Targets self-attention, cross-attention, and MLP modules
+- Rank: 4, Alpha: 16, Dropout: 0.3
+
+**Custom Refinement Layer**
+- Multi-kernel convolution with 4 parallel branches (kernels: 3×3, 5×5, 7×7, 11×11)
+- Captures both fine details and broader context
+- Combines outputs with 1×1 convolution
+
+**Trainable Prompt Embeddings**
+- Dense embedding: Low-rank factorization (256 × r × 64×64)
+- Sparse embedding: 32 × 256
+- Replaces manual prompting for fully automatic operation
+
+### Segmentation Process
+
+The segmentation workflow in `src/circuit_analyzer.py:321-386`:
+
+```python
+def segment_with_sam2(self, image_np_bgr):
+    # Convert to RGB and PIL format
+    image_np_rgb = cv2.cvtColor(image_np_bgr, cv2.COLOR_BGR2RGB)
+    image_pil = Image.fromarray(image_np_rgb)
+    orig_hw = image_np_rgb.shape[:2]
+    
+    # Apply SAM 2.1 transforms
+    image_tensor = self.sam2_transforms(image_pil).unsqueeze(0).to(device)
+    
+    # Inference
+    with torch.no_grad():
+        high_res_mask, low_res_mask, _ = self.sam2_model(image_tensor)
+    
+    # Post-process to original resolution
+    final_mask = self.sam2_transforms.postprocess_masks(
+        high_res_mask, orig_hw
+    )
+    mask_binary = (final_mask.squeeze() > 0.0).numpy().astype(np.uint8) * 255
+    
+    return mask_binary, colored_output, sam_extent_bbox
+```
+
+### Transform Pipeline
+
+SAM 2.1 preprocessing (`src/sam2_infer.py:29-51`):
+
+```python
+class SAM2Transforms(nn.Module):
+    def __init__(self, resolution=1024, mask_threshold=0, ...):
+        self.mean = [0.485, 0.456, 0.406]
+        self.std = [0.229, 0.224, 0.225]
+        self.transforms = nn.Sequential(
+            Resize((resolution, resolution)),
+            Normalize(self.mean, self.std),
+        )
+```
+
+**Key Parameters:**
+- **Resolution**: 1024×1024 (SAM 2.1 native resolution)
+- **Normalization**: ImageNet statistics
+- **Mask Threshold**: 0.0 (binary threshold for final mask)
+
+### Post-Processing
+
+The post-processing stage (`src/sam2_infer.py:88-128`) handles:
+
+1. **Hole Filling**: Removes small background regions (area ≤ `max_hole_area`)
+2. **Sprinkle Removal**: Eliminates small foreground regions (area ≤ `max_sprinkle_area`)
+3. **Bilinear Interpolation**: Upsamples from 1024×1024 to original resolution
+4. **Binary Thresholding**: Creates final 0/255 mask
+
+<Accordion title="Multi-Kernel Refinement Details">
+The refinement layer (`src/sam2_infer.py:130-189`) processes masks through parallel convolutions:
+
+```python
+class MultiKernelRefinement(nn.Module):
+    def __init__(self, kernel_sizes=[3, 5, 7, 11], intermediate_channels=4):
+        # Create parallel branches
+        self.conv_branches = nn.ModuleList([
+            nn.Conv2d(1, intermediate_channels, k, padding='same')
+            for k in kernel_sizes
+        ])
+        
+        # Combine features
+        total_channels = len(kernel_sizes) * intermediate_channels
+        self.combiner = nn.Conv2d(total_channels, 1, kernel_size=1)
+    
+    def forward(self, x):
+        branch_outputs = [F.gelu(conv(x)) for conv in self.conv_branches]
+        concatenated = torch.cat(branch_outputs, dim=1)
+        return self.combiner(concatenated)
+```
+
+This multi-scale approach captures both sharp corners (small kernels) and smooth curves (large kernels) in circuit traces.
+</Accordion>
+
+## Fine-Tuning Results
+
+The SAM 2.1 model was fine-tuned on 267 manually annotated circuit diagrams:
+
+### Accuracy Metrics
+
+| Metric | Value | Description |
+|--------|-------|-------------|
+| **Pixel Accuracy** | 98.7% | Percentage of correctly classified pixels |
+| **Mean IOU** | ~95% | Average intersection-over-union with ground truth |
+| **Dice Score** | ~96% | Harmonic mean of precision and recall |
+
+### Training Configuration
+
+```python
+# From src/sam2_infer.py:277-305
+model = get_modified_sam2(
+    model_cfg_path='models/configs/sam2.1_hiera_l.yaml',
+    checkpoint_path='models/SAM2/sam2.1_hiera_large.pt',
+    use_high_res_features=True,
+    use_peft=True,
+    lora_rank=4,
+    lora_alpha=16,
+    lora_dropout=0.3,
+    use_refinement_layer=True,
+    refinement_kernels=[3, 5, 7, 11],
+    weight_dice=0.5,
+    weight_focal=0.4,
+    weight_iou=0.3
+)
+```
+
+<Info>
+The complete training pipeline is available in the [SAM 2 Training Notebook](https://www.kaggle.com/code/mah01sam/training-sam-2/notebook?scriptVersionId=237405492). The work will be submitted to a journal soon.
+</Info>
+
+## Mask Emptying for Topology Analysis
+
+Before node analysis, component regions are removed from the mask:
+
+```python
+# From src/circuit_analyzer.py:848-882
+def get_emptied_mask(self, image, bboxes):
+    mask = self.segment_circuit(image)  # Or use SAM2 mask
+    
+    # Zero out component regions (except junctions/crossovers)
+    for bbox in bboxes:
+        if bbox['class'] not in ('crossover', 'junction', 'circuit', 'vss'):
+            mask[bbox['ymin']:bbox['ymax'], bbox['xmin']:bbox['xmax']] = 0
+    
+    return mask
+```
+
+**Why Empty Component Regions?**
+- Prevents false connection detection inside components
+- Isolates pure trace topology
+- Preserves junctions and crossovers (structural indicators)
+
+<Note>
+The `get_emptied_mask` function is crucial for accurate node detection. Without it, component bodies would create spurious connection points.
+</Note>
+
+## Fallback Segmentation
+
+If SAM 2.1 is unavailable or fails, a classical vision fallback is used:
+
+```python
+# From src/circuit_analyzer.py:313-319
+def segment_circuit(self, img):
+    img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    mask = cv2.adaptiveThreshold(
+        img_gray, 255, 
+        cv2.ADAPTIVE_THRESH_MEAN_C, 
+        cv2.THRESH_BINARY_INV, 
+        blockSize=31, C=21
+    )
+    return mask
+```
+
+This adaptive thresholding provides reasonable results but lacks the robustness of SAM 2.1 on noisy or low-contrast images.
+
+## Performance Considerations
+
+### GPU Acceleration
+
+```python
+# Device selection (src/sam2_infer.py:18-25)
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")  # Apple Silicon
+else:
+    device = torch.device("cpu")
+```
+
+### Typical Timing
+
+- **YOLO Cropping**: 0.2-0.5s (CPU)
+- **SAM 2.1 Inference**: 1.0-2.5s (GPU) / 5-10s (CPU)
+- **Post-processing**: 0.1-0.3s
+
+<Info>
+GPU acceleration provides a 3-5× speedup for SAM 2.1. The model automatically detects CUDA, MPS (Apple Silicon), or falls back to CPU.
+</Info>
+
+## Visualization Outputs
+
+The segmentation phase produces several debug visualizations:
+
+```python
+active_results['sam2_output'] = colored_output  # Green overlay on black
+active_results['crop_debug_info'] = {  # Detailed crop metadata
+    'crop_applied': bool,
+    'original_image_dims': tuple,
+    'cropped_image_dims': tuple,
+    'final_crop_window_abs': tuple,
+    # ... additional fields
+}
+```
+
+These are displayed in the Streamlit UI for debugging and transparency.
+
+## Integration with Pipeline
+
+Segmentation outputs feed directly into topology analysis:
+
+```python
+# From src/analysis_pipeline.py:227-238
+nodes = run_node_analysis(
+    analyzer,
+    image_cropped,           # Working image after crop
+    sam_mask,                # Binary mask from SAM 2.1
+    bboxes_adjusted,         # Bounding boxes in cropped coordinates
+    active_results,
+    timings,
+    logger
+)
+```
+
+The binary mask enables contour detection, connection point identification, and node clustering.
+
+<CardGroup cols={2}>
+  <Card title="Previous: Detection" icon="eye" href="/concepts/component-detection">
+    Review YOLOv11 component detection
+  </Card>
+  <Card title="Next: Topology Analysis" icon="project-diagram" href="/concepts/topology-analysis">
+    Learn about node detection algorithms
+  </Card>
+</CardGroup>

@@ -1,0 +1,542 @@
+---
+title: 'Dataset Management'
+description: 'Dataset requirements, annotation formats, and best practices for training CircuitVision models'
+---
+
+## Overview
+
+High-quality datasets are crucial for training robust circuit analysis models. This guide covers dataset requirements, annotation formats, and best practices for creating custom datasets for both **YOLOv11 component detection** and **SAM 2 trace segmentation**.
+
+## Dataset Requirements
+
+### Image Quality
+
+For optimal model performance, circuit images should meet these criteria:
+
+<Accordion title="Image Specifications">
+
+**Resolution**
+- Minimum: 640x640 pixels
+- Recommended: 1024x1024 or higher
+- Ensure components are clearly visible at target resolution
+
+**Format**
+- Supported: JPG, PNG, BMP
+- Color: RGB or grayscale
+- Bit depth: 8-bit per channel minimum
+
+**Quality**
+- Clear, well-lit images
+- Minimal motion blur or camera shake
+- Avoid extreme perspective distortion
+- Handle various backgrounds (white paper, grid paper, blackboards)
+
+</Accordion>
+
+### Dataset Diversity
+
+Include variety across multiple dimensions:
+
+- **Drawing styles**: Hand-drawn, printed schematics, CAD exports
+- **Capture methods**: Scanned images, smartphone photos, screenshots
+- **Lighting conditions**: Natural light, fluorescent, LED, mixed
+- **Circuit complexity**: Simple (2-5 components) to complex (20+ components)
+- **Component sizes**: Small SMD representations to large hand-drawn symbols
+- **Orientations**: Portrait, landscape, rotated diagrams
+
+<Info>
+Diversity in training data directly correlates with model robustness on real-world inputs.
+</Info>
+
+## YOLO Dataset Format
+
+### Directory Structure
+
+Organize your YOLO dataset following this structure:
+
+```
+circuit_dataset/
+├── images/
+│   ├── train/
+│   │   ├── circuit_001.jpg
+│   │   ├── circuit_002.jpg
+│   │   └── ...
+│   ├── val/
+│   │   ├── circuit_501.jpg
+│   │   └── ...
+│   └── test/
+│       ├── circuit_601.jpg
+│       └── ...
+├── labels/
+│   ├── train/
+│   │   ├── circuit_001.txt
+│   │   ├── circuit_002.txt
+│   │   └── ...
+│   ├── val/
+│   │   ├── circuit_501.txt
+│   │   └── ...
+│   └── test/
+│       ├── circuit_601.txt
+│       └── ...
+└── data.yaml
+```
+
+### Annotation Format
+
+Each image has a corresponding `.txt` file with one bounding box per line:
+
+```txt
+<class_id> <x_center> <y_center> <width> <height>
+```
+
+**All values are normalized to [0, 1]:**
+
+- `class_id`: Integer index from your class list (0-indexed)
+- `x_center`: Center X coordinate / image width
+- `y_center`: Center Y coordinate / image height
+- `width`: Bounding box width / image width
+- `height`: Bounding box height / image height
+
+**Example annotation:**
+```txt
+12 0.5234 0.6123 0.1200 0.0850
+3 0.2100 0.3400 0.0950 0.0720
+12 0.7800 0.5600 0.1100 0.0800
+```
+
+### Dataset Configuration (data.yaml)
+
+```yaml
+path: /path/to/circuit_dataset  # Root directory
+train: images/train
+val: images/val
+test: images/test
+
+# Number of classes
+nc: 50
+
+# Class names (order matters - index matches class_id)
+names:
+  0: 'gnd'
+  1: 'voltage.ac'
+  2: 'voltage.dc'
+  3: 'resistor'
+  4: 'resistor.adjustable'
+  5: 'capacitor'
+  6: 'capacitor.polarized'
+  7: 'capacitor.unpolarized'
+  8: 'inductor'
+  9: 'inductor.ferrite'
+  10: 'diode'
+  11: 'diode.light_emitting'
+  12: 'diode.zener'
+  13: 'transistor.bjt'
+  14: 'transistor.fet'
+  15: 'operational_amplifier'
+  16: 'integrated_circuit'
+  17: 'voltage.battery'
+  18: 'current.dc'
+  19: 'voltage.dependent'
+  20: 'current.dependent'
+  21: 'transformer'
+  22: 'switch'
+  23: 'thyristor'
+  24: 'varistor'
+  25: 'terminal'
+  26: 'junction'
+  27: 'crossover'
+  28: 'text'
+  29: 'explanatory'
+  # ... add all your classes
+```
+
+<Note>
+CircuitVision uses 50+ component classes. Refer to `circuit_analyzer.py:48-102` for the complete class mapping and netlist conversion.
+</Note>
+
+### Train/Validation/Test Split
+
+Recommended split ratios:
+
+- **Training**: 70-80% of data
+- **Validation**: 10-15% of data
+- **Test**: 10-15% of data
+
+<Accordion title="Split Strategy">
+
+**Random Splitting**
+- Simplest approach for large, homogeneous datasets
+- Ensure random seed for reproducibility
+
+**Stratified Splitting**
+- Maintain class distribution across splits
+- Important when some components are rare
+- Prevents validation set from missing classes
+
+**Source-Based Splitting**
+- Group images by source (e.g., textbook, hand-drawn, CAD)
+- Ensure each split has representation from all sources
+- Better tests generalization across circuit styles
+
+</Accordion>
+
+## SAM 2 Dataset Format
+
+### Directory Structure
+
+```
+sam2_circuit_dataset/
+├── images/
+│   ├── train/
+│   │   ├── circuit_001.jpg
+│   │   └── ...
+│   └── val/
+│       ├── circuit_101.jpg
+│       └── ...
+├── masks/
+│   ├── train/
+│   │   ├── circuit_001.png
+│   │   └── ...
+│   └── val/
+│       ├── circuit_101.png
+│       └── ...
+└── dataset_info.json
+```
+
+### Mask Format
+
+Binary masks for SAM 2 training:
+
+- **File format**: PNG (preferred) or grayscale JPG
+- **Dimensions**: Exact same as corresponding image
+- **Pixel values**:
+  - `255` (white): Conductive traces/connections
+  - `0` (black): Background and components
+- **Single channel**: Grayscale image
+
+<Info>
+CircuitVision SAM 2 was trained on only **267 images** with high-quality masks, achieving **98.7% accuracy**. Quality matters more than quantity!
+</Info>
+
+### Creating Masks
+
+**Manual Annotation Tools:**
+
+1. **CVAT** (Computer Vision Annotation Tool)
+   - Free, web-based
+   - Supports polygon and brush tools
+   - Export as binary masks
+
+2. **LabelMe**
+   - Python-based, simple interface
+   - Polygon annotations
+   - Convert to binary masks with script
+
+3. **Adobe Photoshop / GIMP**
+   - For small datasets
+   - Use selection tools + fill
+   - Export as PNG
+
+**Semi-Automated Approach:**
+
+```python
+import cv2
+import numpy as np
+
+def create_trace_mask(image_path):
+    # Load image
+    img = cv2.imread(image_path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Adaptive thresholding to isolate lines
+    binary = cv2.adaptiveThreshold(
+        gray, 255, 
+        cv2.ADAPTIVE_THRESH_MEAN_C, 
+        cv2.THRESH_BINARY_INV, 
+        31, 21
+    )
+    
+    # Morphological operations to clean up
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+    
+    # Manual refinement needed after this!
+    cv2.imwrite('mask_draft.png', mask)
+    return mask
+```
+
+<Note>
+Semi-automated masks require manual verification and correction. Component bounding boxes should be excluded from trace masks.
+</Note>
+
+## Data Augmentation
+
+### YOLO Augmentation
+
+YOLOv11 includes built-in augmentation:
+
+- **Mosaic**: Combines 4 images into one
+- **MixUp**: Blends two images and labels
+- **Random scaling**: 50-150% of original size
+- **Random cropping**: With bounding box preservation
+- **Horizontal flip**: 50% probability
+- **HSV color jittering**: Hue, saturation, value shifts
+- **Random rotation**: ±15 degrees (configurable)
+
+These are automatically applied during training - no manual implementation needed!
+
+### SAM 2 Augmentation
+
+Recommended augmentations for circuit segmentation:
+
+<Accordion title="Custom Augmentation Pipeline">
+
+```python
+import albumentations as A
+
+transform = A.Compose([
+    # Geometric transformations
+    A.RandomRotate90(p=0.5),
+    A.Flip(p=0.5),
+    A.ShiftScaleRotate(
+        shift_limit=0.1, 
+        scale_limit=0.2, 
+        rotate_limit=15, 
+        p=0.7
+    ),
+    
+    # Photometric transformations
+    A.RandomBrightnessContrast(
+        brightness_limit=0.2, 
+        contrast_limit=0.2, 
+        p=0.5
+    ),
+    A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
+    A.GaussianBlur(blur_limit=(3, 7), p=0.2),
+    
+    # Specific for scanned images
+    A.RandomGamma(gamma_limit=(80, 120), p=0.3),
+    A.CLAHE(clip_limit=4.0, p=0.3),
+])
+
+# Apply to both image and mask
+augmented = transform(image=image, mask=mask)
+augmented_image = augmented['image']
+augmented_mask = augmented['mask']
+```
+
+**Key Points:**
+- Always apply same transform to image and mask
+- Use geometric transforms conservatively (circuits have specific orientations)
+- Photometric transforms help with lighting variations
+- Test augmentations visually before training
+
+</Accordion>
+
+## Dataset Statistics
+
+### CircuitVision Training Data
+
+**YOLOv11 Component Detection:**
+- Dataset size: Large-scale (exact numbers in Kaggle notebook)
+- Classes: 50+ component types
+- Images: Diverse sources (textbooks, hand-drawn, CAD)
+- Annotations: Tight bounding boxes with class labels
+
+**SAM 2 Trace Segmentation:**
+- Training images: **267**
+- Validation split: ~20%
+- Mask quality: Manually verified binary masks
+- Diversity: Multiple circuit styles and complexities
+
+<Card title="Small Dataset, Big Results" icon="lightbulb">
+SAM 2 achieved 98.7% accuracy with only 267 images thanks to LoRA fine-tuning and high-quality annotations. This demonstrates that **annotation quality >> dataset size** for fine-tuning pretrained models.
+</Card>
+
+## Creating Custom Datasets
+
+### Step-by-Step Workflow
+
+1. **Collection**
+   - Gather diverse circuit images
+   - Photograph hand-drawn circuits
+   - Download/scan textbook schematics
+   - Export from CAD tools
+
+2. **Preprocessing**
+   - Resize to consistent dimensions
+   - Correct orientation (EXIF data)
+   - Enhance contrast if needed
+   - Remove duplicates
+
+3. **Annotation**
+   - **YOLO**: Draw tight bounding boxes around components
+   - **SAM 2**: Paint binary masks of conductive traces
+   - Use annotation tools (CVAT, LabelMe, Roboflow)
+   - Follow consistent labeling guidelines
+
+4. **Quality Control**
+   - Review all annotations
+   - Fix overlapping/missing boxes
+   - Verify mask accuracy
+   - Check class label correctness
+
+5. **Dataset Split**
+   - Stratified or source-based splitting
+   - Ensure validation set is representative
+   - Hold out diverse test set
+
+6. **Validation**
+   - Visualize samples from each split
+   - Check class distribution
+   - Verify file naming consistency
+   - Test data loading pipeline
+
+### Annotation Guidelines
+
+<Accordion title="Best Practices for Annotating Circuits">
+
+**Bounding Boxes (YOLO):**
+- Draw tight boxes around component symbols
+- Include component labels (e.g., "R1", "10kΩ") inside the box
+- For multi-part components (e.g., op-amps), box the entire symbol
+- Junctions: Small boxes at connection points
+- Text: Separate boxes for standalone text/values
+
+**Segmentation Masks (SAM 2):**
+- Trace all conductive paths (wires, traces)
+- Exclude component bodies (resistors, capacitors, etc.)
+- Include junction points and connection nodes
+- Ensure continuous paths (no breaks in traces)
+- Use zoom to capture fine details
+- Verify mask aligns with image perfectly
+
+**Consistency:**
+- Define clear class definitions before starting
+- Use annotation guidelines document
+- Multiple annotators? Cross-validate samples
+- Regular review sessions to maintain quality
+
+</Accordion>
+
+## Dataset Validation
+
+### Automated Checks
+
+Before training, validate your dataset:
+
+```python
+import os
+from pathlib import Path
+
+def validate_yolo_dataset(dataset_path):
+    issues = []
+    
+    # Check directory structure
+    required_dirs = ['images/train', 'images/val', 'labels/train', 'labels/val']
+    for dir_name in required_dirs:
+        if not (Path(dataset_path) / dir_name).exists():
+            issues.append(f"Missing directory: {dir_name}")
+    
+    # Check image-label pairs
+    img_dir = Path(dataset_path) / 'images/train'
+    label_dir = Path(dataset_path) / 'labels/train'
+    
+    for img_path in img_dir.glob('*.jpg'):
+        label_path = label_dir / f"{img_path.stem}.txt"
+        if not label_path.exists():
+            issues.append(f"Missing label for {img_path.name}")
+    
+    # Check label format
+    for label_path in label_dir.glob('*.txt'):
+        with open(label_path) as f:
+            for line_num, line in enumerate(f, 1):
+                parts = line.strip().split()
+                if len(parts) != 5:
+                    issues.append(f"{label_path.name}:{line_num} - Invalid format")
+                else:
+                    # Check if values are in [0, 1]
+                    try:
+                        values = [float(x) for x in parts[1:]]
+                        if not all(0 <= v <= 1 for v in values):
+                            issues.append(f"{label_path.name}:{line_num} - Values not normalized")
+                    except ValueError:
+                        issues.append(f"{label_path.name}:{line_num} - Non-numeric values")
+    
+    return issues
+
+# Run validation
+issues = validate_yolo_dataset('/path/to/dataset')
+if issues:
+    print("Dataset validation issues:")
+    for issue in issues:
+        print(f"  - {issue}")
+else:
+    print("Dataset validation passed!")
+```
+
+### Visual Inspection
+
+Always visually inspect random samples:
+
+```python
+import cv2
+import matplotlib.pyplot as plt
+
+def visualize_yolo_sample(img_path, label_path, class_names):
+    img = cv2.imread(str(img_path))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    h, w = img.shape[:2]
+    
+    # Read labels
+    with open(label_path) as f:
+        for line in f:
+            class_id, x_center, y_center, width, height = map(float, line.split())
+            
+            # Denormalize
+            x_center *= w
+            y_center *= h
+            width *= w
+            height *= h
+            
+            # Convert to corner coordinates
+            x1 = int(x_center - width/2)
+            y1 = int(y_center - height/2)
+            x2 = int(x_center + width/2)
+            y2 = int(y_center + height/2)
+            
+            # Draw box
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.putText(img, class_names[int(class_id)], (x1, y1-5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+    
+    plt.figure(figsize=(12, 8))
+    plt.imshow(img)
+    plt.axis('off')
+    plt.title(f"Sample: {img_path.name}")
+    plt.show()
+```
+
+## Kaggle Notebooks
+
+Explore the complete training pipelines used for CircuitVision:
+
+<CardGroup cols={2}>
+  <Card title="YOLOv11 Training" icon="code" href="https://www.kaggle.com/code/mah01sam/yolov11-training-and-project-pipeline">
+    End-to-end YOLO training and inference
+  </Card>
+  <Card title="SAM 2 Training" icon="code" href="https://www.kaggle.com/code/mah01sam/training-sam-2/notebook?scriptVersionId=237405492">
+    LoRA fine-tuning for circuit segmentation
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="YOLO Training Guide" icon="eye" href="/training/yolo-training">
+    Train component detection model
+  </Card>
+  <Card title="SAM 2 Fine-Tuning" icon="scissors" href="/training/sam2-training">
+    Fine-tune segmentation model
+  </Card>
+</CardGroup>

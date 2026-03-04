@@ -1,0 +1,386 @@
+---
+title: 'Docker Setup'
+description: 'Run CircuitVision in a containerized environment using Docker'
+icon: 'docker'
+---
+
+## Why Use Docker?
+
+Docker provides a consistent, isolated environment for CircuitVision with several benefits:
+
+- **No dependency conflicts**: All system libraries are pre-configured
+- **Cross-platform consistency**: Works identically on Linux, macOS, and Windows
+- **Easy deployment**: Single command to build and run
+- **Reproducible environment**: Same setup for all users
+
+<Tip>
+  Docker is the **recommended** installation method for production deployments and users who want a hassle-free setup.
+</Tip>
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install Docker">
+    Download and install Docker Desktop for your platform:
+    
+    - **Windows/macOS**: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+    - **Linux**: [Docker Engine](https://docs.docker.com/engine/install/)
+    
+    Verify installation:
+    ```bash
+    docker --version
+    # Should output: Docker version 20.x.x or higher
+    ```
+  </Step>
+
+  <Step title="Install Docker Compose">
+    Docker Compose is included with Docker Desktop. For Linux users installing Docker Engine separately:
+    
+    ```bash
+    sudo apt-get install docker-compose-plugin
+    docker compose version
+    ```
+  </Step>
+
+  <Step title="Clone the Repository">
+    ```bash
+    git clone https://github.com/JKc66/CircuitVision.git
+    cd CircuitVision
+    ```
+  </Step>
+</Steps>
+
+## Understanding the Dockerfile
+
+The CircuitVision Dockerfile is optimized for efficient builds:
+
+```dockerfile Dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    ngspice \
+    build-essential \
+    python3-dev \
+    gcc \
+    libngspice0 \
+    libngspice0-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set environment variables for ngspice
+ENV PYTHONPATH=/usr/local/lib/python3.12/site-packages \
+    LD_LIBRARY_PATH=/lib/aarch64-linux-gnu \
+    SPICE_LIB=/usr/share/ngspice/scripts \
+    NGSPICE_LIBRARY_PATH=/lib/aarch64-linux-gnu/libngspice.so
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install PySpice
+
+# Copy application code
+COPY . .
+
+EXPOSE 8501
+
+# Run Streamlit app
+ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+```
+
+<Accordion title="Key Configuration Details">
+  - **Base Image**: `python:3.12-slim` for minimal size
+  - **Layer Caching**: Dependencies are installed before copying code for faster rebuilds
+  - **ngspice Integration**: System libraries and environment variables configured for PySpice
+  - **Port**: Streamlit runs on port 8501
+  - **Address**: Bound to `0.0.0.0` to accept external connections
+</Accordion>
+
+## Building the Docker Image
+
+<Steps>
+  <Step title="Build the Image">
+    From the project root directory:
+    
+    ```bash
+    docker build -t circuitvision .
+    ```
+    
+    This process:
+    1. Downloads the base Python 3.12 image
+    2. Installs system dependencies (ngspice, build tools)
+    3. Installs Python packages from requirements.txt
+    4. Copies your application code
+    
+    <Warning>
+      First build may take 10-15 minutes depending on your internet connection.
+    </Warning>
+  </Step>
+
+  <Step title="Verify the Build">
+    Check that the image was created successfully:
+    
+    ```bash
+    docker images | grep circuitvision
+    ```
+    
+    You should see output similar to:
+    ```
+    circuitvision   latest   abc123def456   2 minutes ago   2.5GB
+    ```
+  </Step>
+</Steps>
+
+## Running with Docker Compose
+
+The `docker-compose.yml` file simplifies container management:
+
+```yaml docker-compose.yml
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+      - ./models:/app/models
+    environment:
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+```
+
+### Configuration Breakdown
+
+| Setting | Purpose |
+|---------|--------|
+| `ports: "8501:8501"` | Maps container port 8501 to host port 8501 |
+| `volumes: .:/app` | Mounts current directory for live code updates |
+| `volumes: ./models:/app/models` | Persists model weights between container restarts |
+| `env_file: .env` | Loads environment variables (API keys) |
+
+### Launch the Application
+
+<Steps>
+  <Step title="Create .env File">
+    Create a `.env` file in the project root with your API key:
+    
+    ```bash .env
+    GEMINI_API_KEY=your_gemini_api_key_here
+    ```
+  </Step>
+
+  <Step title="Start the Container">
+    ```bash
+    docker compose up --build
+    ```
+    
+    For detached mode (runs in background):
+    ```bash
+    docker compose up -d --build
+    ```
+  </Step>
+
+  <Step title="Access the Application">
+    Open your browser and navigate to:
+    ```
+    http://localhost:8501
+    ```
+    
+    Wait for models to load (indicated by "Models Ready" badge).
+  </Step>
+</Steps>
+
+## Volume Mounts Explained
+
+### Code Volume Mount: `.:/app`
+
+<Accordion title="Why mount the entire directory?">
+  Mounting `.:/app` allows:
+  - **Live code updates**: Changes to Python files reflect immediately (with Streamlit auto-reload)
+  - **Development workflow**: No need to rebuild the image for code changes
+  - **Log access**: View application logs from your host machine
+  
+  <Warning>
+    This is ideal for development but should be removed in production deployments.
+  </Warning>
+</Accordion>
+
+### Model Volume Mount: `./models:/app/models`
+
+<Accordion title="Persisting model weights">
+  This mount ensures:
+  - Model files downloaded once are reused across container restarts
+  - No need to re-download 2GB+ of model weights
+  - Faster startup times after initial setup
+  
+  Make sure to run `python download_models.py` before or after the first container start.
+</Accordion>
+
+## Environment Variables
+
+CircuitVision uses environment variables for configuration:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GEMINI_API_KEY` | Yes | - | Google Gemini API key for component extraction |
+| `LOG_LEVEL` | No | `DEBUG` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `PYTHONPATH` | No | `/app` | Python module search path |
+
+### Setting Environment Variables
+
+<CodeGroup>
+  ```bash .env File (Recommended)
+  GEMINI_API_KEY=AIzaSyAbc123...
+  LOG_LEVEL=INFO
+  ```
+  
+  ```bash Command Line
+  docker compose run -e GEMINI_API_KEY=your_key -e LOG_LEVEL=INFO web
+  ```
+  
+  ```yaml docker-compose.yml
+  environment:
+    - GEMINI_API_KEY=your_key
+    - LOG_LEVEL=INFO
+  ```
+</CodeGroup>
+
+<Tip>
+  Using a `.env` file is recommended as it keeps sensitive data out of version control. Add `.env` to your `.gitignore`.
+</Tip>
+
+## Docker Commands Reference
+
+### Container Management
+
+```bash
+# Start containers
+docker compose up
+
+# Start in background
+docker compose up -d
+
+# Stop containers
+docker compose down
+
+# View logs
+docker compose logs -f
+
+# Restart containers
+docker compose restart
+```
+
+### Rebuilding
+
+```bash
+# Rebuild after dependency changes
+docker compose up --build
+
+# Force rebuild (no cache)
+docker compose build --no-cache
+
+# Rebuild specific service
+docker compose build web
+```
+
+### Cleanup
+
+```bash
+# Remove containers and networks
+docker compose down
+
+# Remove containers, networks, and volumes
+docker compose down -v
+
+# Remove unused images
+docker image prune
+
+# Complete cleanup (use with caution)
+docker system prune -a
+```
+
+## Troubleshooting
+
+<Accordion title="Port 8501 already in use">
+  Modify the port mapping in `docker-compose.yml`:
+  
+  ```yaml
+  ports:
+    - "8502:8501"  # Access at http://localhost:8502
+  ```
+</Accordion>
+
+<Accordion title="Models not loading">
+  1. Ensure `./models` directory exists on your host
+  2. Run `python download_models.py` from your host or inside the container:
+     ```bash
+     docker compose exec web python download_models.py
+     ```
+  3. Check volume mount is working:
+     ```bash
+     docker compose exec web ls -la /app/models
+     ```
+</Accordion>
+
+<Accordion title="Permission denied errors">
+  On Linux, you may need to adjust file permissions:
+  
+  ```bash
+  sudo chown -R $USER:$USER .
+  chmod -R 755 models
+  ```
+</Accordion>
+
+<Accordion title="Out of memory errors">
+  Increase Docker's memory allocation:
+  - **Docker Desktop**: Settings → Resources → Memory (set to at least 8GB)
+  - **Linux**: Adjust Docker daemon settings
+</Accordion>
+
+## Production Deployment
+
+For production environments, consider these modifications:
+
+1. **Remove development volumes**:
+   ```yaml
+   # Remove or comment out
+   # volumes:
+   #   - .:/app
+   ```
+
+2. **Set log level to INFO or WARNING**:
+   ```bash
+   LOG_LEVEL=WARNING
+   ```
+
+3. **Use secrets management** instead of .env files:
+   - Docker Swarm secrets
+   - Kubernetes secrets
+   - Cloud provider secret managers
+
+4. **Add health checks**:
+   ```yaml
+   healthcheck:
+     test: ["CMD", "curl", "-f", "http://localhost:8501"]
+     interval: 30s
+     timeout: 10s
+     retries: 3
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Using the App" icon="play" href="/guides/using-the-app">
+    Learn how to analyze circuit diagrams
+  </Card>
+  <Card title="API Keys" icon="key" href="/guides/api-keys">
+    Configure your Gemini API key
+  </Card>
+</CardGroup>

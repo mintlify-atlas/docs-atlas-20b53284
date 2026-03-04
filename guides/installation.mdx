@@ -1,0 +1,203 @@
+---
+title: 'Installation Guide'
+description: 'Step-by-step instructions to install CircuitVision locally using Python'
+icon: 'download'
+---
+
+## System Requirements
+
+Before installing CircuitVision, ensure your system meets these requirements:
+
+- **Operating System**: Linux, macOS, or Windows
+- **Python**: Version 3.12 or higher
+- **RAM**: Minimum 8GB (16GB recommended for optimal performance)
+- **Storage**: At least 5GB free space for models and dependencies
+- **Internet Connection**: Required for downloading models and API access
+
+<Warning>
+  CircuitVision uses CPU-based inference by default. While GPU acceleration is not required, analysis may take 15-20 seconds per image on CPU.
+</Warning>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Install Python 3.12">
+    Download and install Python 3.12 from [python.org](https://www.python.org/downloads/). Verify your installation:
+    
+    ```bash
+    python --version
+    # Should output: Python 3.12.x
+    ```
+    
+    <Tip>
+      On some systems, you may need to use `python3` instead of `python`.
+    </Tip>
+  </Step>
+
+  <Step title="Clone the Repository">
+    Clone the CircuitVision repository to your local machine:
+    
+    ```bash
+    git clone https://github.com/JKc66/CircuitVision.git
+    cd CircuitVision
+    ```
+  </Step>
+
+  <Step title="Install System Dependencies">
+    CircuitVision requires **ngspice** for circuit simulation. Install it based on your operating system:
+    
+    <CodeGroup>
+      ```bash Ubuntu/Debian
+      sudo apt-get update
+      sudo apt-get install -y ngspice libngspice0 libngspice0-dev
+      ```
+      
+      ```bash macOS
+      brew install ngspice
+      ```
+      
+      ```bash Arch Linux
+      sudo pacman -S ngspice
+      ```
+    </CodeGroup>
+    
+    <Warning>
+      Additional dependencies for image processing may be required:
+      - **Linux**: `libgl1-mesa-glx`, `libglib2.0-0`
+      - Install with: `sudo apt-get install libgl1-mesa-glx libglib2.0-0`
+    </Warning>
+  </Step>
+
+  <Step title="Create Virtual Environment">
+    Create and activate a Python virtual environment:
+    
+    ```bash
+    python -m venv venv
+    
+    # On Linux/macOS
+    source venv/bin/activate
+    
+    # On Windows
+    venv\Scripts\activate
+    ```
+  </Step>
+
+  <Step title="Install Python Dependencies">
+    Install all required Python packages from `requirements.txt`:
+    
+    ```bash
+    pip install -r requirements.txt
+    ```
+    
+    This will install the following key dependencies:
+    - **streamlit**: Web application framework
+    - **torch & torchvision**: Deep learning frameworks
+    - **ultralytics**: YOLOv11 implementation
+    - **google-genai**: Gemini API client
+    - **PySpice**: SPICE simulation interface
+    - **opencv-python & Pillow**: Image processing
+    - **SAM2**: Segmentation model (installed from GitHub)
+    
+    <Tip>
+      Installation may take 5-10 minutes depending on your internet connection and system.
+    </Tip>
+  </Step>
+
+  <Step title="Download Model Weights">
+    CircuitVision requires pre-trained model weights for YOLO and SAM2. Download them using the provided script:
+    
+    ```bash
+    pip install requests gdown
+    python download_models.py
+    ```
+    
+    This creates:
+    - `models/YOLO/` - YOLOv11 fine-tuned weights
+    - `models/SAM2/` - SAM2 base and fine-tuned checkpoints
+    - `models/configs/` - Model configuration files
+  </Step>
+
+  <Step title="Set Up API Key">
+    You need a Google Gemini API key for component value extraction. See the [API Keys guide](/guides/api-keys) for detailed instructions.
+    
+    Quick setup:
+    ```bash
+    # Create .env file
+    echo "GEMINI_API_KEY=your_api_key_here" > .env
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    Test your installation by launching the application:
+    
+    ```bash
+    streamlit run app.py
+    ```
+    
+    The app should open in your browser at `http://localhost:8501`. You'll see a loading screen while models initialize (typically 10-30 seconds).
+  </Step>
+</Steps>
+
+## Post-Installation
+
+Once installed, you should see:
+- **Models Ready** badge indicating successful model loading
+- **Running on CPU** badge showing the number of available cores
+- File uploader ready to accept circuit images
+
+## Troubleshooting
+
+<Accordion title="ModuleNotFoundError: No module named 'PySpice'">
+  If PySpice installation fails, install it separately:
+  
+  ```bash
+  pip install PySpice
+  ```
+  
+  Ensure ngspice is installed on your system first.
+</Accordion>
+
+<Accordion title="SAM2 model files not found">
+  If you see warnings about missing SAM2 files:
+  
+  1. Verify the `models/SAM2/` directory exists
+  2. Re-run `python download_models.py`
+  3. Check your internet connection
+  
+  The app will still work but segmentation features will be limited.
+</Accordion>
+
+<Accordion title="torch/CUDA errors">
+  CircuitVision runs on CPU by default. If you encounter CUDA-related errors:
+  
+  ```bash
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+  ```
+</Accordion>
+
+<Accordion title="Port 8501 already in use">
+  If the default Streamlit port is occupied, specify a different port:
+  
+  ```bash
+  streamlit run app.py --server.port=8502
+  ```
+</Accordion>
+
+<Accordion title="Image processing errors on Linux">
+  Install additional system libraries:
+  
+  ```bash
+  sudo apt-get install -y build-essential python3-dev gcc libgl1-mesa-glx libglib2.0-0
+  ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Setup" icon="docker" href="/guides/docker-setup">
+    Run CircuitVision in a containerized environment
+  </Card>
+  <Card title="Using the App" icon="play" href="/guides/using-the-app">
+    Learn how to analyze circuit diagrams
+  </Card>
+</CardGroup>

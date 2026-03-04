@@ -1,0 +1,220 @@
+---
+title: Welcome to CircuitVision
+description: AI-powered circuit diagram analysis and SPICE netlist generation using fine-tuned YOLOv11, SAM 2.1, and Gemini
+mode: custom
+---
+
+<div className="relative py-20 overflow-hidden bg-gradient-to-br from-[#1E40AF] via-[#3B82F6] to-[#60A5FA] dark:from-[#0f1117] dark:via-[#1a1d27] dark:to-[#1E40AF]">
+  <div className="absolute inset-0 bg-black/30 dark:bg-black/50"></div>
+  <div className="relative max-w-6xl mx-auto px-6 sm:px-8 text-center">
+    <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6">
+      CircuitVision
+    </h1>
+    <p className="text-lg sm:text-xl text-white/90 max-w-3xl mx-auto mb-8">
+      Transform electrical circuit diagrams into SPICE-compatible netlists instantly. Powered by fine-tuned YOLOv11, SAM 2.1, and Google Gemini for high-precision component detection and analysis.
+    </p>
+    <div className="flex flex-wrap items-center justify-center gap-4">
+      <a 
+        href="/quickstart" 
+        className="inline-flex items-center px-6 py-3 text-base font-semibold text-white bg-[#3B82F6] hover:bg-[#1E40AF] rounded-lg transition-colors no-underline"
+      >
+        Get Started
+      </a>
+      <a 
+        href="/concepts/pipeline-overview" 
+        className="inline-flex items-center px-6 py-3 text-base font-semibold text-white border border-white/30 bg-white/10 hover:bg-white/20 rounded-lg transition-colors no-underline"
+      >
+        Learn the Pipeline
+      </a>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Get started in minutes
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Follow these steps to set up CircuitVision and analyze your first circuit diagram.
+  </p>
+
+  <Steps>
+    <Step title="Install dependencies">
+      Clone the repository and install required Python packages:
+      
+      ```bash
+      git clone https://github.com/JKc66/CircuitVision.git
+      cd CircuitVision
+      pip install -r requirements.txt
+      ```
+    </Step>
+
+    <Step title="Download model weights">
+      Run the provided script to download pre-trained YOLOv11 and SAM 2.1 models:
+      
+      ```bash
+      python download_models.py
+      ```
+      
+      This creates `models/YOLO` and `models/SAM2` directories with the necessary fine-tuned weights.
+    </Step>
+
+    <Step title="Configure API keys">
+      Set your Google Gemini API key for component value extraction:
+      
+      ```bash
+      export GEMINI_API_KEY="your-api-key-here"
+      ```
+      
+      <Tip>Get a free Gemini API key at [Google AI Studio](https://aistudio.google.com/app/apikey)</Tip>
+    </Step>
+
+    <Step title="Launch the application">
+      Start the Streamlit web interface:
+      
+      ```bash
+      streamlit run app.py
+      ```
+      
+      Upload a circuit diagram image and watch CircuitVision detect components, analyze topology, and generate a SPICE netlist automatically.
+    </Step>
+  </Steps>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Key features
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    CircuitVision combines state-of-the-art AI models with custom algorithms for unmatched accuracy.
+  </p>
+
+  <CardGroup cols={2}>
+    <Card title="High-precision detection" icon="crosshairs" href="/concepts/component-detection">
+      Fine-tuned YOLOv11 achieves 93.13% mAP-50 on electrical circuit components, detecting resistors, capacitors, diodes, transistors, and more.
+    </Card>
+    <Card title="Accurate segmentation" icon="scissors" href="/concepts/segmentation">
+      Custom-adapted SAM 2.1 achieves 98.7% accuracy for circuit trace segmentation from just 267 training images.
+    </Card>
+    <Card title="Intelligent topology analysis" icon="diagram-project" href="/concepts/topology-analysis">
+      Custom algorithms identify connection nodes, analyze circuit structure, and handle junctions, crossovers, and ground points.
+    </Card>
+    <Card title="AI-powered value extraction" icon="brain" href="/concepts/netlist-generation">
+      Google Gemini extracts component values and types through OCR and contextual understanding, enriching netlists with real circuit parameters.
+    </Card>
+    <Card title="SPICE simulation" icon="wave-square" href="/api/spice-simulator">
+      Generate SPICE-compatible netlists ready for DC and AC analysis with PySpice integration.
+    </Card>
+    <Card title="Interactive interface" icon="display" href="/guides/using-the-app">
+      Streamlit-powered UI with real-time visualization of detection, segmentation, and analysis results.
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Explore by topic
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Dive deeper into CircuitVision's architecture, training process, and API.
+  </p>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <a 
+      href="/concepts/pipeline-overview" 
+      className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#3B82F6] dark:hover:border-[#3B82F6] overflow-hidden bg-white dark:bg-[#1a1d27] transition-colors no-underline"
+    >
+      <div className="p-6">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
+          Core Concepts
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Understand the four-phase pipeline: component detection, segmentation, topology analysis, and netlist generation.
+        </p>
+        <div className="flex items-center text-sm font-medium text-[#3B82F6] dark:text-[#60A5FA] group-hover:text-[#1E40AF] dark:group-hover:text-[#3B82F6]">
+          Learn more
+          <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <a 
+      href="/training/yolo-training" 
+      className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#3B82F6] dark:hover:border-[#3B82F6] overflow-hidden bg-white dark:bg-[#1a1d27] transition-colors no-underline"
+    >
+      <div className="p-6">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
+          Model Training
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Access training notebooks and datasets for fine-tuning YOLOv11 and SAM 2.1 on your own circuit images.
+        </p>
+        <div className="flex items-center text-sm font-medium text-[#3B82F6] dark:text-[#60A5FA] group-hover:text-[#1E40AF] dark:group-hover:text-[#3B82F6]">
+          View training guides
+          <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <a 
+      href="/api/circuit-analyzer" 
+      className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#3B82F6] dark:hover:border-[#3B82F6] overflow-hidden bg-white dark:bg-[#1a1d27] transition-colors no-underline"
+    >
+      <div className="p-6">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
+          API Reference
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Integrate CircuitVision into your own applications using the CircuitAnalyzer class and pipeline functions.
+        </p>
+        <div className="flex items-center text-sm font-medium text-[#3B82F6] dark:text-[#60A5FA] group-hover:text-[#1E40AF] dark:group-hover:text-[#3B82F6]">
+          Browse API docs
+          <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <a 
+      href="/guides/docker-setup" 
+      className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#3B82F6] dark:hover:border-[#3B82F6] overflow-hidden bg-white dark:bg-[#1a1d27] transition-colors no-underline"
+    >
+      <div className="p-6">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
+          Deployment Guides
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Deploy CircuitVision with Docker for a consistent, isolated environment across development and production.
+        </p>
+        <div className="flex items-center text-sm font-medium text-[#3B82F6] dark:text-[#60A5FA] group-hover:text-[#1E40AF] dark:group-hover:text-[#3B82F6]">
+          Read deployment docs
+          <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gradient-to-br from-[#3B82F6]/10 to-[#60A5FA]/10 dark:from-[#1E40AF]/20 dark:to-[#3B82F6]/20 p-8 sm:p-12 text-center">
+    <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+      Ready to analyze circuits?
+    </h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-6">
+      Get CircuitVision running in minutes and start converting circuit diagrams to SPICE netlists with state-of-the-art AI.
+    </p>
+    <a 
+      href="/quickstart" 
+      className="inline-flex items-center px-6 py-3 text-base font-semibold text-white bg-[#3B82F6] hover:bg-[#1E40AF] rounded-lg transition-colors no-underline"
+    >
+      Get Started Now
+    </a>
+  </div>
+</div>

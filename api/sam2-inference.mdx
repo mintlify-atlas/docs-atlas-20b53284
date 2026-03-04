@@ -1,0 +1,343 @@
+---
+title: SAM2 Inference
+description: SAM 2.1 model setup, transforms, and fine-tuning integration for circuit segmentation
+---
+
+## Overview
+
+The `sam2_infer` module provides the infrastructure for loading and using the fine-tuned SAM 2.1 model. It includes custom transforms, LoRA integration, and refinement layers that achieve 98.7% accuracy on circuit segmentation.
+
+## Device Configuration
+
+```python
+from src.sam2_infer import device
+
+print(f"Using device: {device}")
+# Output: "cuda" if GPU available, else "cpu"
+```
+
+<ResponseField name="device" type="torch.device">
+  Global device variable (CUDA if available, otherwise CPU)
+</ResponseField>
+
+## SAM2Transforms
+
+Custom transform class for preprocessing images and postprocessing masks.
+
+### Initialization
+
+```python
+from src.sam2_infer import SAM2Transforms
+
+transforms = SAM2Transforms(
+    resolution=1024,
+    mask_threshold=0.0,
+    max_hole_area=0,
+    max_sprinkle_area=0
+)
+```
+
+**Parameters:**
+
+<ParamField path="resolution" type="int" default="1024">
+  Target resolution for SAM 2.1 (images resized to resolution × resolution)
+</ParamField>
+
+<ParamField path="mask_threshold" type="float" default="0.0">
+  Threshold for binarizing output masks (0.0 to 1.0)
+</ParamField>
+
+<ParamField path="max_hole_area" type="int" default="0">
+  Maximum hole area to fill in masks (pixels)
+</ParamField>
+
+<ParamField path="max_sprinkle_area" type="int" default="0">
+  Maximum sprinkle (small connected component) area to remove (pixels)
+</ParamField>
+
+### Methods
+
+#### __call__()
+
+Preprocesses a PIL image for SAM 2.1 inference.
+
+```python
+from PIL import Image
+import torch
+
+image_pil = Image.open('circuit.png').convert('RGB')
+image_tensor = transforms(image_pil)
+print(image_tensor.shape)  # torch.Size([3, 1024, 1024])
+```
+
+**Parameters:**
+
+<ParamField path="x" type="PIL.Image.Image" required>
+  Input image in RGB format
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="tensor" type="torch.Tensor">
+  Preprocessed image tensor (3, resolution, resolution) normalized to [0, 1]
+</ResponseField>
+
+#### postprocess_masks()
+
+Scales SAM output masks back to original image dimensions.
+
+```python
+high_res_mask_tensor = model(image_tensor)
+final_mask = transforms.postprocess_masks(
+    high_res_mask_tensor,
+    orig_hw=(800, 1200)  # Original height, width
+)
+print(final_mask.shape)  # torch.Size([1, 1, 800, 1200])
+```
+
+**Parameters:**
+
+<ParamField path="masks" type="torch.Tensor" required>
+  Output masks from SAM 2.1 model
+</ParamField>
+
+<ParamField path="orig_hw" type="Tuple[int, int]" required>
+  Original image dimensions (height, width)
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="resized_masks" type="torch.Tensor">
+  Masks interpolated to original image size using bilinear interpolation
+</ResponseField>
+
+## Model Loading
+
+### get_modified_sam2()
+
+Builds a SAM 2.1 model with LoRA, refinement layers, and custom loss components.
+
+```python
+from src.sam2_infer import get_modified_sam2
+
+model = get_modified_sam2(
+    model_cfg_path='/models/configs/sam2.1_hiera_l.yaml',
+    checkpoint_path='models/SAM2/sam2.1_hiera_large.pt',
+    device='cuda',
+    use_high_res_features=True,
+    use_peft=True,
+    lora_rank=4,
+    lora_alpha=16,
+    lora_dropout=0.3,
+    lora_target_modules=['sam_mask_decoder.transformer.layers.0.self_attn.q_proj', ...],
+    use_wrapper=True,
+    trainable_embedding_r=4,
+    use_refinement_layer=True,
+    refinement_kernels=[3, 5, 7, 11],
+    kernel_channels=2,
+    weight_dice=0.5,
+    weight_focal=0.4,
+    weight_iou=0.3,
+    weight_freq=0.1,
+    focal_alpha=0.25
+)
+```
+
+**Parameters:**
+
+<ParamField path="model_cfg_path" type="str" required>
+  Path to SAM 2.1 Hydra config file (YAML)
+</ParamField>
+
+<ParamField path="checkpoint_path" type="str" required>
+  Path to base SAM 2.1 checkpoint (before fine-tuning)
+</ParamField>
+
+<ParamField path="device" type="str" default="cuda">
+  Device to load model on ('cuda' or 'cpu')
+</ParamField>
+
+<ParamField path="use_high_res_features" type="bool" default="True">
+  Use high-resolution features from the image encoder
+</ParamField>
+
+<ParamField path="use_peft" type="bool" default="True">
+  Enable LoRA (PEFT) for parameter-efficient fine-tuning
+</ParamField>
+
+<ParamField path="lora_rank" type="int" default="4">
+  LoRA rank (r) - number of low-rank dimensions
+</ParamField>
+
+<ParamField path="lora_alpha" type="int" default="16">
+  LoRA scaling factor (α)
+</ParamField>
+
+<ParamField path="lora_dropout" type="float" default="0.3">
+  Dropout rate for LoRA layers
+</ParamField>
+
+<ParamField path="lora_target_modules" type="List[str]" default="[]">
+  List of module names to apply LoRA to (see circuit_analyzer.py:156-199)
+</ParamField>
+
+<ParamField path="use_wrapper" type="bool" default="True">
+  Wrap model with SAM2ImageEncoderWrapper
+</ParamField>
+
+<ParamField path="trainable_embedding_r" type="int" default="4">
+  Dimension for trainable mask embeddings
+</ParamField>
+
+<ParamField path="use_refinement_layer" type="bool" default="True">
+  Add multi-kernel refinement layer after mask decoder
+</ParamField>
+
+<ParamField path="refinement_kernels" type="List[int]" default="[3, 5, 7, 11]">
+  Kernel sizes for multi-scale refinement
+</ParamField>
+
+<ParamField path="kernel_channels" type="int" default="2">
+  Channels per refinement kernel
+</ParamField>
+
+<ParamField path="weight_dice" type="float" default="0.5">
+  Weight for Dice loss component
+</ParamField>
+
+<ParamField path="weight_focal" type="float" default="0.4">
+  Weight for Focal loss component
+</ParamField>
+
+<ParamField path="weight_iou" type="float" default="0.3">
+  Weight for IoU loss component
+</ParamField>
+
+<ParamField path="weight_freq" type="float" default="0.1">
+  Weight for frequency domain loss component
+</ParamField>
+
+<ParamField path="focal_alpha" type="float" default="0.25">
+  Alpha parameter for Focal loss
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="model" type="torch.nn.Module">
+  SAM 2.1 model with LoRA and refinement layers ready for inference
+</ResponseField>
+
+<Note>
+The fine-tuned weights must be loaded separately using `model.load_state_dict()` after calling this function.
+</Note>
+
+## LoRA Configuration
+
+The CircuitVision SAM 2.1 model uses LoRA on **45 target modules**:
+
+<Accordion title="LoRA target modules (full list)">
+**Mask Decoder Attention Layers:**
+- `sam_mask_decoder.transformer.layers.{0,1}.self_attn.{q,k,v,out}_proj`
+- `sam_mask_decoder.transformer.layers.{0,1}.cross_attn_token_to_image.{q,k,v,out}_proj`
+- `sam_mask_decoder.transformer.layers.{0,1}.cross_attn_image_to_token.{q,k,v}_proj`
+
+**Mask Decoder MLP Layers:**
+- `sam_mask_decoder.transformer.layers.{0,1}.mlp.layers.{0,1}`
+
+**Mask Decoder Output:**
+- `sam_mask_decoder.iou_prediction_head.layers.2`
+- `sam_mask_decoder.conv_s0`
+- `sam_mask_decoder.conv_s1`
+
+**Image Encoder Neck:**
+- `image_encoder.neck.convs.{2,3}.conv`
+
+**Image Encoder Trunk (downsampling blocks):**
+- `image_encoder.trunk.blocks.{44,47}.attn.qkv`
+- `image_encoder.trunk.blocks.{44,47}.mlp.layers.0`
+- `image_encoder.trunk.blocks.44.proj`
+</Accordion>
+
+## Refinement Layer
+
+The custom `MultiKernelRefinementLayer` applies parallel convolutions with different kernel sizes:
+
+```python
+# Applied after SAM mask decoder
+refinement_kernels = [3, 5, 7, 11]
+kernel_channels = 2
+
+# Creates 4 parallel conv branches:
+# - 3×3 conv with 2 channels
+# - 5×5 conv with 2 channels
+# - 7×7 conv with 2 channels
+# - 11×11 conv with 2 channels
+# Outputs concatenated: 8 channels → 1×1 conv → 1 channel mask
+```
+
+<Tip>
+Multi-scale refinement captures both fine details (small kernels) and global structure (large kernels) for precise circuit trace segmentation.
+</Tip>
+
+## Complete Inference Example
+
+```python
+import torch
+import cv2
+from PIL import Image
+from src.sam2_infer import SAM2Transforms, get_modified_sam2, device
+
+# Setup
+model = get_modified_sam2(
+    model_cfg_path='/models/configs/sam2.1_hiera_l.yaml',
+    checkpoint_path='models/SAM2/sam2.1_hiera_large.pt',
+    device=str(device),
+    use_peft=True,
+    lora_rank=4,
+    lora_alpha=16,
+    use_refinement_layer=True,
+    refinement_kernels=[3, 5, 7, 11]
+)
+
+# Load fine-tuned weights
+checkpoint = torch.load('models/SAM2/best_miou_model_SAM_latest.pth', map_location=device)
+model.load_state_dict(checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint)
+model.eval()
+
+# Initialize transforms
+transforms = SAM2Transforms(resolution=1024, mask_threshold=0.0)
+
+# Load and preprocess image
+image_bgr = cv2.imread('circuit.png')
+image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+image_pil = Image.fromarray(image_rgb)
+orig_hw = image_rgb.shape[:2]
+
+image_tensor = transforms(image_pil).unsqueeze(0).to(device)
+
+# Inference
+with torch.no_grad():
+    high_res_mask, low_res_mask, _ = model(image_tensor)
+
+# Postprocess
+final_mask = transforms.postprocess_masks(high_res_mask, orig_hw)
+mask_binary = (final_mask.squeeze().cpu().numpy() > 0.0).astype('uint8') * 255
+
+# Save result
+cv2.imwrite('segmentation_mask.png', mask_binary)
+print(f"Mask shape: {mask_binary.shape}")  # (orig_height, orig_width)
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="CircuitAnalyzer" icon="microchip" href="/api/circuit-analyzer">
+    See segment_with_sam2() for integration
+  </Card>
+  <Card title="SAM 2 Training" icon="graduation-cap" href="/training/sam2-training">
+    Learn how the model was fine-tuned
+  </Card>
+  <Card title="Segmentation Concepts" icon="scissors" href="/concepts/segmentation">
+    Understand the two-stage approach
+  </Card>
+</CardGroup>

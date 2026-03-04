@@ -1,0 +1,386 @@
+---
+title: Topology Analysis
+description: Custom node detection and connection mapping algorithms
+---
+
+Topology analysis is the most algorithmically complex phase of CircuitVision. Using the SAM 2.1-generated binary mask and component bounding boxes, custom-developed algorithms identify **connection nodes** and map the electrical topology of the circuit.
+
+## Node Detection Overview
+
+A **node** in circuit analysis represents an electrical connection point where multiple components meet. CircuitVision detects nodes through a multi-step process:
+
+<Steps>
+  <Step title="Mask Preparation">
+    Remove component regions from the SAM 2.1 mask, leaving only conductive traces
+  </Step>
+  <Step title="Contour Extraction">
+    Find connected regions in the emptied mask using OpenCV contour detection
+  </Step>
+  <Step title="Connection Point Detection">
+    Identify where component terminals meet each contour (the core algorithm)
+  </Step>
+  <Step title="Node Clustering">
+    Group connection points into electrical nodes based on shared contours
+  </Step>
+</Steps>
+
+## Mask Preparation
+
+The first step isolates circuit traces from component bodies:
+
+```python
+# From src/circuit_analyzer.py:848-882
+def get_emptied_mask(self, image, bboxes):
+    # Use SAM2 mask or fallback to adaptive threshold
+    mask = sam2_binary_mask if available else self.segment_circuit(image)
+    
+    image_copy = mask.copy()
+    
+    # Zero out non-junction component regions
+    for bbox in bboxes:
+        if bbox['class'] not in ('crossover', 'junction', 'circuit', 'vss'):
+            image_copy[
+                int(bbox['ymin']):int(bbox['ymax']),
+                int(bbox['xmin']):int(bbox['xmax'])
+            ] = 0
+    
+    return image_copy
+```
+
+**Preserved Elements:**
+- `junction`: Explicit connection points
+- `crossover`: Wire crossings (no electrical connection)
+- `vss`: Ground symbols
+
+**Removed Elements:**
+- All passive components (resistors, capacitors, inductors)
+- Active components (transistors, diodes, op-amps)
+- Voltage/current sources
+
+This leaves only the "wires" connecting components.
+
+## Contour Extraction
+
+OpenCV's contour detection identifies connected trace regions:
+
+```python
+# From src/circuit_analyzer.py:388-459
+def get_contours(self, img, area_threshold=0.00040):
+    # Invert if necessary (lines should be white on black)
+    if cv2.mean(img)[0] > 127:
+        img = 255 - img
+    
+    # Threshold
+    img[img == 255] = 1
+    
+    # Find contours
+    contours, _ = cv2.findContours(
+        img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    
+    # Filter by area (remove noise)
+    normalizer = img.shape[0] * img.shape[1]
+    contours = [
+        c for c in contours 
+        if cv2.contourArea(c) / normalizer > area_threshold
+    ]
+    
+    # Package with metadata
+    return [{
+        'id': i,
+        'contour': contour,
+        'area': cv2.contourArea(contour) / normalizer,
+        'rectangle': cv2.boundingRect(contour)
+    } for i, contour in enumerate(contours)]
+```
+
+**Area Threshold**: `0.00040` (0.04% of image area)
+- Filters out tiny noise regions
+- Preserves even thin traces
+- Adaptive to image resolution
+
+<Note>
+Each contour represents a **conductive region**—a set of connected pixels in the mask. Components sharing a contour are electrically connected.
+</Note>
+
+## Connection Point Detection
+
+This is the core innovation: identifying where components **connect** to traces.
+
+### Pixel-Based Corner Finding
+
+CircuitVision uses a custom corner detection algorithm optimized for circuit diagrams:
+
+```python
+# Conceptual overview (full implementation is complex)
+for bbox in component_bboxes:
+    # 1. Extract component perimeter pixels
+    perimeter_coords = get_bbox_perimeter_pixels(bbox)
+    
+    # 2. Find which perimeter pixels touch the mask
+    connection_pixels = [
+        (x, y) for (x, y) in perimeter_coords
+        if emptied_mask[y, x] > 0  # Pixel is white (trace present)
+    ]
+    
+    # 3. Cluster nearby connection pixels into terminal groups
+    terminals = cluster_connection_pixels(connection_pixels)
+    
+    # 4. Find representative point for each terminal
+    connection_points = [
+        calculate_centroid(terminal_pixels)
+        for terminal_pixels in terminals
+    ]
+```
+
+### Proximity-Based Matching
+
+Alternatively, components are matched to contours via proximity:
+
+```python
+# From src/circuit_analyzer.py:811-846
+def is_point_near_bbox(self, point, bbox, pixel_threshold):
+    px, py = point
+    xmin, ymin, xmax, ymax = bbox['xmin'], bbox['ymin'], bbox['xmax'], bbox['ymax']
+    
+    # 1. Check if point is inside bbox
+    if xmin <= px <= xmax and ymin <= py <= ymax:
+        return True
+    
+    # 2. Check distance to edges
+    dist_left = abs(px - xmin)
+    dist_right = abs(px - xmax)
+    dist_top = abs(py - ymin)
+    dist_bottom = abs(py - ymax)
+    
+    return (dist_left <= pixel_threshold or 
+            dist_right <= pixel_threshold or
+            dist_top <= pixel_threshold or 
+            dist_bottom <= pixel_threshold)
+```
+
+**Threshold Selection:**
+- Typically 10-20 pixels depending on image resolution
+- Balances tolerance for slight misalignment with false positive prevention
+
+<Accordion title="Why Custom Corner Detection?">
+Standard corner detectors (Harris, Shi-Tomasi) are optimized for natural images and fail on circuit diagrams due to:
+
+1. **Sharp edges everywhere**: Circuit symbols are all corners and lines
+2. **Text interference**: Labels create spurious corner detections
+3. **Scale variation**: Components range from tiny resistors to large ICs
+
+The pixel-based approach directly leverages the binary mask, eliminating these issues.
+</Accordion>
+
+## Node Clustering
+
+Once connection points are identified, they must be grouped into **nodes** (equipotential sets):
+
+```python
+# Conceptual algorithm
+nodes = []
+
+for contour in contours:
+    node_components = []
+    
+    # Find all components touching this contour
+    for bbox in bboxes:
+        connection_points = find_connection_points(bbox, contour)
+        
+        if connection_points:
+            node_components.append({
+                'bbox': bbox,
+                'class': bbox['class'],
+                'connection_points': connection_points,
+                'persistent_uid': bbox['persistent_uid']
+            })
+    
+    # Create node if multiple components connect
+    if len(node_components) >= 2:
+        nodes.append({
+            'id': len(nodes),
+            'components': node_components,
+            'contour': contour
+        })
+```
+
+### Node Structure
+
+Each node is represented as:
+
+```python
+node = {
+    'id': 0,                           # Unique node identifier
+    'components': [                    # List of connected components
+        {
+            'bbox': {...},             # Full bounding box dict
+            'class': 'resistor',       # Component type
+            'connection_points': [(x1, y1), (x2, y2)],
+            'persistent_uid': '...',   # Unique component ID
+            'semantic_direction': 'LEFT_TO_RIGHT'  # From VLM enrichment
+        },
+        # ... more components
+    ],
+    'contour': np.array([...])         # OpenCV contour object
+}
+```
+
+<Info>
+The `semantic_direction` field is added during VLM enrichment (see [Netlist Generation](/concepts/netlist-generation)). It determines polarity for diodes, transistors, and voltage sources.
+</Info>
+
+## Junction and Crossover Handling
+
+### Junctions
+
+Explicit junction symbols are preserved in the mask:
+
+```python
+if bbox['class'] == 'junction':
+    # Keep junction region in mask during emptying
+    # This ensures 3+ way connections are detected correctly
+    pass  # Do not zero out this region
+```
+
+Junctions ensure that T-connections and star-connections are properly identified even if traces are thin.
+
+### Crossovers
+
+Wire crossings **without electrical connection** are handled specially:
+
+```python
+if bbox['class'] == 'crossover':
+    # Crossover indicates two separate contours pass through same pixel region
+    # Keep in mask but mark for special handling in node clustering
+    # Components on opposite "arms" should NOT be in the same node
+    pass
+```
+
+Crossovers are challenging because the mask shows a single blob, but electrically there are two separate nodes. Advanced logic (not shown) splits these regions.
+
+## Morphological Enhancement
+
+Before contour detection, the mask may be enhanced:
+
+```python
+# From src/circuit_analyzer.py:289-311
+def enhance_lines(self, image):
+    # Gaussian blur to reduce noise
+    blurred = cv2.GaussianBlur(image, (5, 5), 1)
+    
+    # Dilation to connect broken lines
+    kernel = np.ones((3, 3), np.uint8)
+    dilated = cv2.dilate(blurred, kernel, iterations=2)
+    
+    # Erosion to refine thickness
+    eroded = cv2.erode(dilated, kernel, iterations=2)
+    
+    return eroded
+```
+
+**Purpose:**
+- **Dilation**: Connects traces broken by noise or low-quality scans
+- **Erosion**: Restores original line width, removes "blobs"
+
+<Note>
+Morphological operations are optional and applied based on mask quality. SAM 2.1 masks are typically clean enough to skip this step.
+</Note>
+
+## Coordinate System Considerations
+
+All topology analysis operates in the **cropped image coordinate system**:
+
+```python
+# From src/analysis_pipeline.py:227-238
+nodes = run_node_analysis(
+    analyzer,
+    image_cropped,           # NOT original_image
+    sam_mask_cropped,        # Mask matches cropped image dimensions
+    bboxes_adjusted,         # Bboxes already adjusted to crop coordinates
+    active_results,
+    timings,
+    logger
+)
+```
+
+This ensures pixel-perfect alignment between:
+- SAM 2.1 binary mask
+- Component bounding boxes
+- Detected connection points
+
+## Fallback Strategies
+
+If node analysis fails, CircuitVision gracefully degrades:
+
+```python
+# From src/analysis_pipeline.py:245-257
+except Exception as e:
+    logger.error(f"Error during node analysis: {str(e)}")
+    st.error(error_msg)
+    logger.warning("Continuing execution despite node analysis error")
+    # nodes_identified remains None
+```
+
+The netlist generation phase (`src/analysis_pipeline.py:308-323`) then attempts to create a basic netlist from components only, without connection information.
+
+## Visualization Outputs
+
+Topology analysis produces rich debug visualizations:
+
+```python
+active_results['node_visualization'] = final_visualization  # Colored nodes
+active_results['node_mask'] = emptied_mask                  # Binary mask after component removal
+active_results['enhanced_mask'] = enhanced                  # After morphological ops
+active_results['contour_image'] = contour_image             # Colored contours
+active_results['connection_points_image'] = conn_points_img # Marked connection points
+```
+
+These are displayed in the Streamlit UI to help users understand (and debug) the detected topology.
+
+## Performance Characteristics
+
+### Complexity
+
+- **Contour Detection**: O(n) where n = number of pixels
+- **Connection Point Matching**: O(c × b) where c = contours, b = bboxes
+- **Node Clustering**: O(c × b) in practice (sparse graph)
+
+### Typical Timing
+
+- **Mask Emptying**: 0.05-0.15s
+- **Contour Extraction**: 0.10-0.30s
+- **Connection Matching**: 0.15-0.40s
+- **Total Node Analysis**: 0.30-0.80s
+
+<Info>
+Topology analysis is CPU-bound and does not benefit from GPU acceleration. However, it's fast enough that optimization is rarely necessary.
+</Info>
+
+## Integration with Netlist Generation
+
+The node data structure is the primary input to netlist generation:
+
+```python
+# From src/analysis_pipeline.py:269-276
+netlist = run_initial_netlist_generation(
+    analyzer,
+    nodes,               # Output from topology analysis
+    image_cropped,
+    bboxes_adjusted,
+    active_results,
+    timings,
+    logger
+)
+```
+
+Each node becomes one or more lines in the SPICE netlist, with node IDs mapping directly to SPICE node numbers.
+
+<CardGroup cols={2}>
+  <Card title="Previous: Segmentation" icon="scissors" href="/concepts/segmentation">
+    Review SAM 2.1 trace extraction
+  </Card>
+  <Card title="Next: Netlist Generation" icon="file-code" href="/concepts/netlist-generation">
+    Learn how nodes become SPICE netlists
+  </Card>
+</CardGroup>

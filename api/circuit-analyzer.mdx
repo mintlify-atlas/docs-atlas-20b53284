@@ -1,0 +1,376 @@
+---
+title: CircuitAnalyzer
+description: Core class for analyzing electrical circuit diagrams using YOLOv11, SAM 2.1, and Gemini
+---
+
+## Overview
+
+The `CircuitAnalyzer` class is the main entry point for circuit diagram analysis. It orchestrates component detection with YOLOv11, circuit segmentation with SAM 2.1, topology analysis, and netlist generation.
+
+## Initialization
+
+```python
+from src.circuit_analyzer import CircuitAnalyzer
+
+analyzer = CircuitAnalyzer(
+    yolo_path='models/YOLO/best_large_model_yolo.pt',
+    sam2_config_path='models/configs/sam2.1_hiera_l.yaml',
+    sam2_base_checkpoint_path='models/SAM2/sam2.1_hiera_large.pt',
+    sam2_finetuned_checkpoint_path='models/SAM2/best_miou_model_SAM_latest.pth',
+    use_sam2=True,
+    debug=False
+)
+```
+
+### Parameters
+
+<ParamField path="yolo_path" type="str" default="models/YOLO/best_large_model_yolo.pt">
+  Path to the fine-tuned YOLOv11 model weights for component detection
+</ParamField>
+
+<ParamField path="sam2_config_path" type="str" default="models/configs/sam2.1_hiera_l.yaml">
+  Path to the SAM 2.1 configuration file (Hiera-L architecture)
+</ParamField>
+
+<ParamField path="sam2_base_checkpoint_path" type="str" default="models/SAM2/sam2.1_hiera_large.pt">
+  Path to the base SAM 2.1 checkpoint before fine-tuning
+</ParamField>
+
+<ParamField path="sam2_finetuned_checkpoint_path" type="str" default="models/SAM2/best_miou_model_SAM_latest.pth">
+  Path to the fine-tuned SAM 2.1 weights (98.7% accuracy on circuit segmentation)
+</ParamField>
+
+<ParamField path="use_sam2" type="bool" default="True">
+  Whether to use SAM 2.1 for segmentation. If False, falls back to adaptive thresholding
+</ParamField>
+
+<ParamField path="debug" type="bool" default="False">
+  Enable debug mode for detailed logging and visualization
+</ParamField>
+
+## Key Methods
+
+### bboxes()
+
+Detects electrical components in a circuit diagram using YOLOv11.
+
+```python
+image = cv2.imread('circuit.png')
+image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+detected_components = analyzer.bboxes(image_rgb)
+```
+
+**Parameters:**
+
+<ParamField path="image" type="np.ndarray" required>
+  Input circuit diagram image in RGB format (height, width, 3)
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="bboxes" type="List[Dict]">
+  List of detected component bounding boxes with the following structure:
+  
+  <Expandable title="properties">
+    <ResponseField name="class" type="str">
+      Component class name (e.g., 'resistor', 'capacitor', 'voltage.dc')
+    </ResponseField>
+    <ResponseField name="confidence" type="float">
+      Detection confidence score (0.0 to 1.0)
+    </ResponseField>
+    <ResponseField name="xmin" type="int">
+      Left x-coordinate of bounding box
+    </ResponseField>
+    <ResponseField name="ymin" type="int">
+      Top y-coordinate of bounding box
+    </ResponseField>
+    <ResponseField name="xmax" type="int">
+      Right x-coordinate of bounding box
+    </ResponseField>
+    <ResponseField name="ymax" type="int">
+      Bottom y-coordinate of bounding box
+    </ResponseField>
+    <ResponseField name="persistent_uid" type="str">
+      Unique identifier for the component based on class and coordinates
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### segment_with_sam2()
+
+Segments circuit traces using the fine-tuned SAM 2.1 model.
+
+```python
+image_bgr = cv2.imread('circuit.png')
+
+mask_binary, colored_output, extent_bbox = analyzer.segment_with_sam2(image_bgr)
+```
+
+**Parameters:**
+
+<ParamField path="image_np_bgr" type="np.ndarray" required>
+  Input image in BGR format (from cv2.imread)
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="tuple" type="Tuple[np.ndarray | None, np.ndarray | None, Tuple[int,int,int,int] | None]">
+  - `mask_binary_np`: Binary mask (uint8, 0 or 255) at original image resolution
+  - `colored_output`: Colored version of mask for visualization
+  - `sam_extent_bbox`: Bounding box (xmin, ymin, xmax, ymax) around mask contours
+</ResponseField>
+
+<Note>
+The binary mask has 255 for circuit traces and 0 for background. Component regions should be excluded using `get_emptied_mask()` before topology analysis.
+</Note>
+
+### crop_image_and_adjust_bboxes()
+
+Intelligently crops the image to focus on the circuit and adjusts bounding box coordinates.
+
+```python
+cropped_image, adjusted_bboxes, crop_info = analyzer.crop_image_and_adjust_bboxes(
+    image_to_crop=original_image,
+    all_yolo_bboxes_input=detected_bboxes,
+    padding=20
+)
+```
+
+**Parameters:**
+
+<ParamField path="image_to_crop" type="np.ndarray" required>
+  Original image to crop
+</ParamField>
+
+<ParamField path="all_yolo_bboxes_input" type="List[Dict]" required>
+  List of YOLO bounding boxes in original image coordinates
+</ParamField>
+
+<ParamField path="padding" type="int" default="20">
+  Padding pixels around the crop window
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="tuple" type="Tuple[np.ndarray, List[Dict], Dict]">
+  - `cropped_image`: Cropped image (or original if no crop applied)
+  - `adjusted_bboxes`: Bounding boxes adjusted to cropped coordinates
+  - `crop_debug_info`: Dictionary with cropping metadata and decision logs
+</ResponseField>
+
+### get_node_connections()
+
+Analyzes circuit topology to identify electrical connection nodes.
+
+```python
+nodes, mask_visual, enhanced, contours, visualization, conn_points = analyzer.get_node_connections(
+    image=cropped_image,
+    sam_mask=binary_mask,
+    bboxes=adjusted_bboxes
+)
+```
+
+**Parameters:**
+
+<ParamField path="image" type="np.ndarray" required>
+  Circuit image in RGB format
+</ParamField>
+
+<ParamField path="sam_mask" type="np.ndarray" required>
+  Binary segmentation mask from SAM 2.1
+</ParamField>
+
+<ParamField path="bboxes" type="List[Dict]" required>
+  Component bounding boxes with coordinates matching the image
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="tuple" type="Tuple[List[Dict], ...]">
+  - `nodes`: List of node dictionaries with connected components
+  - `emptied_mask`: Mask with component regions removed
+  - `enhanced`: Enhanced mask for visualization
+  - `contour_image`: Image showing detected contours
+  - `visualization`: Final visualization with nodes and connections
+  - `connection_points_image`: Image showing detected connection points
+</ResponseField>
+
+<Accordion title="Node dictionary structure">
+Each node in the returned list has this structure:
+
+```python
+{
+    'id': 1,  # Node number
+    'components': [
+        {
+            'class': 'resistor',
+            'xmin': 120, 'ymin': 200, 'xmax': 180, 'ymax': 240,
+            'persistent_uid': 'resistor_120_200_180_240',
+            'corner_type': 'top_left',  # Which corner connects to this node
+            'semantic_direction': 'left_to_right'  # Enriched by VLM if applicable
+        },
+        # ... more components
+    ],
+    'position': (150, 220)  # Approximate center of the node
+}
+```
+</Accordion>
+
+### generate_netlist_from_nodes()
+
+Generates a SPICE-compatible netlist from topology analysis results.
+
+```python
+netlist = analyzer.generate_netlist_from_nodes(
+    nodes=detected_nodes,
+    components_bboxes=adjusted_bboxes  # Optional, used if nodes is empty
+)
+```
+
+**Parameters:**
+
+<ParamField path="nodes" type="List[Dict]" required>
+  Node connection data from `get_node_connections()`
+</ParamField>
+
+<ParamField path="components_bboxes" type="List[Dict]" default="None">
+  Fallback component list if no nodes detected
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="netlist" type="List[Dict]">
+  List of netlist line dictionaries, each representing a component:
+  
+  <Expandable title="properties">
+    <ResponseField name="class" type="str">
+      Component class (e.g., 'resistor', 'capacitor')
+    </ResponseField>
+    <ResponseField name="spice_prefix" type="str">
+      SPICE prefix letter (R, C, L, D, V, I, etc.)
+    </ResponseField>
+    <ResponseField name="nodes" type="List[int]">
+      Node indices the component connects to
+    </ResponseField>
+    <ResponseField name="value" type="str | None">
+      Component value (initially None, enriched by Gemini)
+    </ResponseField>
+    <ResponseField name="type" type="str | None">
+      Specific component subtype (initially None, enriched by Gemini)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tip>
+The initial netlist has no values. Use `fix_netlist()` with Gemini output to enrich it with component values and types.
+</Tip>
+
+### enumerate_components()
+
+Draws enumeration IDs on components for Gemini value extraction.
+
+```python
+enumerated_image, bbox_with_ids = analyzer.enumerate_components(
+    image=cropped_image,
+    bboxes=adjusted_bboxes
+)
+```
+
+**Parameters:**
+
+<ParamField path="image" type="np.ndarray" required>
+  Circuit image to annotate
+</ParamField>
+
+<ParamField path="bboxes" type="List[Dict]" required>
+  Component bounding boxes to enumerate
+</ParamField>
+
+<ParamField path="excluded_labels" type="Set[str]" default="None">
+  Component classes to exclude from enumeration (defaults to non_components)
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="tuple" type="Tuple[np.ndarray, List[Dict]]">
+  - `enumerated_image`: Image with red ID numbers drawn on components
+  - `bbox_with_ids`: Bounding boxes with added 'id' field (1, 2, 3...)
+</ResponseField>
+
+## Component Class Mapping
+
+The analyzer maintains a `netlist_map` dictionary for SPICE conversion:
+
+```python
+netlist_map = {
+    'resistor': 'R',
+    'capacitor': 'C',
+    'inductor': 'L',
+    'diode': 'D',
+    'transistor.bjt': 'Q',
+    'transistor.fet': 'M',
+    'voltage.ac': 'V',
+    'voltage.dc': 'V',
+    'current.dc': 'I',
+    'gnd': '0',
+    # ... 27 total mappings
+}
+```
+
+## Example Workflow
+
+```python
+import cv2
+from src.circuit_analyzer import CircuitAnalyzer
+
+# Initialize analyzer
+analyzer = CircuitAnalyzer(debug=False)
+
+# Load and prepare image
+image = cv2.imread('circuit_diagram.png')
+image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+# Step 1: Detect components
+bboxes = analyzer.bboxes(image_rgb)
+print(f"Detected {len(bboxes)} components")
+
+# Step 2: Crop to circuit region
+cropped_img, cropped_bboxes, crop_info = analyzer.crop_image_and_adjust_bboxes(
+    image_rgb, bboxes, padding=20
+)
+
+# Step 3: Segment circuit traces
+mask_binary, _, _ = analyzer.segment_with_sam2(cropped_img)
+
+# Step 4: Analyze topology
+nodes, _, _, _, viz, _ = analyzer.get_node_connections(
+    cropped_img, mask_binary, cropped_bboxes
+)
+
+# Step 5: Generate netlist
+netlist = analyzer.generate_netlist_from_nodes(nodes)
+print(f"Generated netlist with {len(netlist)} components")
+
+# Step 6: Enumerate for Gemini
+enum_img, bbox_ids = analyzer.enumerate_components(cropped_img, cropped_bboxes)
+
+# (Next: send enum_img to Gemini, then use fix_netlist())
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Analysis Pipeline" icon="diagram-next" href="/api/analysis-pipeline">
+    High-level pipeline functions for Streamlit integration
+  </Card>
+  <Card title="SAM2 Inference" icon="scissors" href="/api/sam2-inference">
+    SAM 2.1 model setup and transforms
+  </Card>
+  <Card title="Utilities" icon="wrench" href="/api/utils">
+    NMS, Gemini calls, and helper functions
+  </Card>
+  <Card title="SPICE Simulator" icon="wave-square" href="/api/spice-simulator">
+    DC and AC analysis functions
+  </Card>
+</CardGroup>

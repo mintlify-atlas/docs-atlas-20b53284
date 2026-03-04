@@ -1,0 +1,250 @@
+---
+title: Component Detection
+description: Fine-tuned YOLOv11 for electrical component recognition
+---
+
+CircuitVision's component detection phase uses a fine-tuned YOLOv11 model to identify and localize electrical components with exceptional accuracy. Achieving **93.13% mAP-50**, the model matches state-of-the-art detection performance on circuit diagrams.
+
+## Model Architecture
+
+The detection system is built on YOLOv11-Large, fine-tuned specifically for electrical circuit components:
+
+```python
+from ultralytics import YOLO
+
+class CircuitAnalyzer:
+    def __init__(self, yolo_path='models/YOLO/best_large_model_yolo.pt'):
+        self.yolo = YOLO(yolo_path)
+        self.classes = load_classes()
+        # ... additional initialization
+```
+
+<Info>
+The model weights are loaded from `models/YOLO/best_large_model_yolo.pt`. Training notebooks are available on [Kaggle](https://www.kaggle.com/code/mah01sam/yolov11-training-and-project-pipeline).
+</Info>
+
+## Supported Component Classes
+
+The model detects **27 component classes** after filtering, including:
+
+### Passive Components
+- **Resistors**: `resistor`, `resistor.adjustable`, `resistor.photo`
+- **Capacitors**: `capacitor`, `capacitor.polarized`, `capacitor.unpolarized`, `capacitor.adjustable`
+- **Inductors**: `inductor`, `inductor.ferrite`
+
+### Active Components
+- **Diodes**: `diode`, `diode.zener`, `diode.light_emitting`
+- **Transistors**: `transistor.bjt`, `transistor.fet`
+- **Operational Amplifiers**: `operational_amplifier`, `operational_amplifier.schmitt_trigger`
+
+### Sources
+- **Voltage Sources**: `voltage.dc`, `voltage.ac`, `voltage.battery`, `voltage.dependent`
+- **Current Sources**: `current.dc`, `current.ac`, `current.dependent`
+
+### Structural Elements
+- **Connections**: `junction`, `crossover`, `terminal`
+- **References**: `gnd` (ground), `vss`, `text`
+
+<Note>
+Some classes like `optical`, `mechanical`, `block`, `antenna`, `relay`, and logic gates are excluded to focus on standard analog circuits. See `src/circuit_analyzer.py:57-63` for the complete filtering logic.
+</Note>
+
+## Detection Process
+
+The detection workflow in `src/circuit_analyzer.py:267-287`:
+
+```python
+def bboxes(self, image):
+    # Run YOLO inference
+    results = self.yolo.predict(image, verbose=True)
+    results = results[0]
+    
+    # Extract class IDs and names
+    img_classes_ids = results.boxes.cls.cpu().numpy().tolist()
+    img_classes_names = [results.names[int(num_id)] for num_id in img_classes_ids]
+    confidences = results.boxes.conf.cpu().numpy().tolist()
+    boxes_coords = results.boxes.xyxy.cpu().numpy().tolist()
+    
+    # Format as structured dictionaries
+    processed_boxes = []
+    for i, (xmin, ymin, xmax, ymax) in enumerate(boxes_coords):
+        processed_boxes.append({
+            'class': img_classes_names[i],
+            '_yolo_class_id_temp': int(img_classes_ids[i]),
+            'confidence': confidences[i],
+            'xmin': round(xmin),
+            'ymin': round(ymin),
+            'xmax': round(xmax),
+            'ymax': round(ymax),
+            'persistent_uid': f"{img_classes_names[i]}_{round(xmin)}_{round(ymin)}_{round(xmax)}_{round(ymax)}"
+        })
+    return processed_boxes
+```
+
+### Persistent UIDs
+
+Each detected component receives a unique identifier based on its class and location:
+
+```python
+'persistent_uid': f"{class_name}_{xmin}_{ymin}_{xmax}_{ymax}"
+```
+
+This UID remains stable across pipeline phases, enabling traceability from detection through netlist generation.
+
+## Non-Maximum Suppression (NMS)
+
+To eliminate duplicate detections, CircuitVision applies two NMS strategies:
+
+### Confidence-Based NMS
+
+Used immediately after initial detection (`src/analysis_pipeline.py:106`):
+
+```python
+bboxes_nms = non_max_suppression_by_confidence(
+    raw_bboxes, iou_threshold=0.6
+)
+```
+
+- **IOU Threshold**: 0.6 (60% overlap triggers suppression)
+- **Priority**: Higher confidence scores are retained
+- **Purpose**: Quick filtering of obvious duplicates
+
+### Area-Based NMS
+
+Applied during component enumeration (`src/circuit_analyzer.py:694`):
+
+```python
+bboxes = non_max_suppression_by_area(
+    all_bboxes, iou_threshold=0.6
+)
+```
+
+- **Priority**: Larger bounding boxes are retained (often more accurate)
+- **Purpose**: Handle cases where smaller spurious detections overlap with correct ones
+
+<Accordion title="NMS Implementation Details">
+The confidence-based NMS algorithm:
+1. Sorts bounding boxes by confidence score (descending)
+2. Iterates through sorted list
+3. Calculates IOU with all remaining boxes
+4. Removes boxes with IOU > threshold
+5. Returns filtered list
+
+This is particularly effective for circuits with dense component layouts where multiple overlapping predictions may occur.
+</Accordion>
+
+## Fine-Tuning Results
+
+The YOLOv11 model was fine-tuned on a custom dataset of electrical circuit diagrams:
+
+### Performance Metrics
+
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| **mAP-50** | 93.13% | Overall detection quality at 50% IOU |
+| **Precision** | ~91% | Low false positive rate |
+| **Recall** | ~89% | Captures most components |
+
+### Training Configuration
+
+- **Base Model**: YOLOv11-Large (pre-trained on COCO)
+- **Dataset Size**: Custom electrical components dataset
+- **Epochs**: Trained until convergence
+- **Augmentations**: Rotation, scaling, brightness adjustments
+
+<Info>
+The training process and hyperparameters are documented in the [YOLOv11 Training Notebook](https://www.kaggle.com/code/mah01sam/yolov11-training-and-project-pipeline).
+</Info>
+
+## Component Categorization
+
+Components are categorized for specialized processing:
+
+```python
+# Special categories (src/circuit_analyzer.py:51-52)
+self.non_components = {'text', 'junction', 'crossover', 'vss', 'explanatory', 'circuit'}
+self.source_components = {'voltage.ac', 'voltage.dc', 'voltage.dependent', 
+                          'current.dc', 'current.dependent'}
+```
+
+**Non-Components** are excluded from certain analyses:
+- Not counted in component statistics
+- Preserved in segmentation masks (junctions, crossovers)
+- Used for spatial reference (text labels)
+
+**Source Components** receive special handling:
+- Direction matters for polarity
+- Semantic analysis via VLM determines orientation
+- See [Netlist Generation](/concepts/netlist-generation) for details
+
+## Bounding Box Adjustment
+
+After intelligent cropping, bounding boxes are adjusted to the new coordinate system:
+
+```python
+# From src/analysis_pipeline.py:177-181
+image_cropped, bboxes_adjusted, crop_info = analyzer.crop_image_and_adjust_bboxes(
+    original_image,
+    deepcopy(bboxes_initial),
+    padding=80
+)
+```
+
+The adjustment process:
+1. Determines crop window from component cluster
+2. Adds padding (default 80px) for context
+3. Translates all coordinates: `new_coord = original_coord - crop_offset`
+4. Maintains `persistent_uid` for traceability
+
+<Note>
+Bounding box coordinates are **always relative to the current working image**, which may be the original image or a cropped version depending on the pipeline phase.
+</Note>
+
+## Component Enumeration
+
+For VLM-based value extraction, components are numbered visually:
+
+```python
+# From src/circuit_analyzer.py:712-715
+enum_img, bbox_ids = analyzer.enumerate_components(
+    image_for_analysis,
+    deepcopy(bboxes)
+)
+```
+
+The enumeration algorithm (`src/circuit_analyzer.py:479-785`):
+1. Calculates optimal label positions (8 candidate positions per component)
+2. Avoids overlap with other components, text, and previously drawn numbers
+3. Prefers positions closest to component center
+4. Falls back to top-left corner if no ideal position exists
+
+### Label Positioning Strategy
+
+```python
+candidate_positions = {
+    "right_middle": (xmax + padding, yc - text_half_h),
+    "left_middle": (xmin - text_w - padding, yc - text_half_h),
+    "top_center": (xc - text_half_w, ymin - text_h - padding),
+    "bottom_center": (xc - text_half_w, ymax + padding),
+    # ... 4 corner positions
+}
+```
+
+Positions are sorted by distance from component center, ensuring labels stay close to their components.
+
+## Integration with Pipeline
+
+Component detection feeds into all subsequent phases:
+
+- **Segmentation**: Bounding boxes define crop window for SAM 2.1
+- **Topology**: Component locations determine node proximity searches
+- **Netlist**: Component classes map to SPICE element types
+
+<CardGroup cols={2}>
+  <Card title="Next: Segmentation" icon="scissors" href="/concepts/segmentation">
+    Learn how SAM 2.1 extracts circuit traces
+  </Card>
+  <Card title="View Training Code" icon="code" href="https://www.kaggle.com/code/mah01sam/yolov11-training-and-project-pipeline">
+    Explore the YOLOv11 fine-tuning notebook
+  </Card>
+</CardGroup>

@@ -1,0 +1,161 @@
+---
+title: Pipeline Overview
+description: Understanding CircuitVision's four-phase analysis pipeline
+---
+
+CircuitVision transforms circuit diagrams into SPICE-ready netlists through a sophisticated four-phase pipeline. Each phase builds upon the previous one, creating a seamless workflow from image input to simulation-ready output.
+
+## The Four-Phase Architecture
+
+The pipeline processes circuit images through distinct stages, each optimized for specific tasks:
+
+<Steps>
+  <Step title="Component Detection">
+    YOLOv11 identifies and localizes electrical components with 93.13% mAP-50 accuracy
+  </Step>
+  <Step title="Segmentation & Cropping">
+    SAM 2.1 extracts conductive traces with 98.7% accuracy after intelligent YOLO-based cropping
+  </Step>
+  <Step title="Topology Analysis">
+    Custom algorithms detect connection nodes and map component interconnections
+  </Step>
+  <Step title="Netlist Generation">
+    Two-stage process creates structural netlists enriched with component values via Gemini
+  </Step>
+</Steps>
+
+## Data Flow Through the Pipeline
+
+The analysis process follows this sequence in `src/analysis_pipeline.py`:
+
+```python
+# Phase 1: Initial Detection
+bboxes_orig = run_initial_detection(
+    analyzer, active_results, timings, logger
+)
+
+# Phase 2: Segmentation and Cropping
+image_cropped, bboxes_adjusted, sam_mask = run_segmentation_and_cropping(
+    analyzer, active_results, timings, logger
+)
+
+# Phase 3: Topology Analysis
+nodes = run_node_analysis(
+    analyzer, image_cropped, sam_mask, bboxes_adjusted, 
+    active_results, timings, logger
+)
+
+# Phase 4: Netlist Generation
+netlist = run_initial_netlist_generation(
+    analyzer, nodes, image_cropped, bboxes_adjusted,
+    active_results, timings, logger
+)
+```
+
+<Note>
+The pipeline automatically handles EXIF orientation, ensuring circuit diagrams are properly oriented before analysis begins (see `src/analysis_pipeline.py:64-75`).
+</Note>
+
+## Image Preprocessing
+
+Before entering the main pipeline, images undergo automatic preprocessing:
+
+**EXIF-Based Auto-Rotation**
+- Detects orientation metadata (EXIF tag 0x0112)
+- Applies `ImageOps.exif_transpose()` for correct orientation
+- Preserves original EXIF data in saved files
+
+**Color Space Normalization**
+- Converts uploaded images to RGB format
+- Applies SAM 2.1 normalization: `mean=[0.485, 0.456, 0.406]`, `std=[0.229, 0.224, 0.225]`
+
+## Coordinate System Management
+
+As images are cropped and resized through the pipeline, CircuitVision maintains coordinate accuracy:
+
+<Accordion title="Bounding Box Adjustment Logic">
+```python
+def resize_bboxes(self, bboxes, width_scale, height_scale):
+    resized_bboxes = []
+    for bbox in bboxes:
+        resized_bbox = bbox.copy()
+        resized_bbox['xmin'] = int(bbox['xmin'] * width_scale)
+        resized_bbox['ymin'] = int(bbox['ymin'] * height_scale)
+        resized_bbox['xmax'] = int(bbox['xmax'] * width_scale)
+        resized_bbox['ymax'] = int(bbox['ymax'] * height_scale)
+        resized_bboxes.append(resized_bbox)
+    return resized_bboxes
+```
+This ensures all component locations remain accurate relative to the processed image (see `src/circuit_analyzer.py:461-477`).
+</Accordion>
+
+## Pipeline Performance
+
+Typical processing times for a standard circuit diagram:
+
+| Phase | Average Time | Primary Bottleneck |
+|-------|--------------|--------------------|
+| YOLO Detection | 0.5-1.5s | GPU inference |
+| SAM 2.1 Segmentation | 1.0-2.5s | High-resolution mask generation |
+| Topology Analysis | 0.3-0.8s | Contour finding & node clustering |
+| Netlist Generation | 2.0-4.0s | Gemini API calls |
+
+<Info>
+All timing data is captured in `active_results['detailed_timings']` and displayed in the Streamlit interface for performance monitoring.
+</Info>
+
+## Error Handling & Fallbacks
+
+The pipeline includes robust error handling at each phase:
+
+**SAM 2.1 Fallback**
+- If SAM 2.1 fails, falls back to adaptive thresholding (`cv2.adaptiveThreshold`)
+- See `src/circuit_analyzer.py:313-319` for the fallback segmentation method
+
+**Netlist Generation Fallback**
+- If node analysis fails, generates netlist from components only
+- Creates "valueless" netlist structure for manual completion
+- Documented in `src/analysis_pipeline.py:308-323`
+
+**VLM Enrichment Fallback**
+- Continues with structural netlist if Gemini API fails
+- Logs error and warns user without stopping pipeline
+- See `src/analysis_pipeline.py:368-370`
+
+## Session State Management
+
+CircuitVision maintains analysis state across the pipeline:
+
+```python
+st.session_state.active_results = {
+    'bboxes': None,                    # Adjusted component bounding boxes
+    'nodes': None,                     # Detected connection nodes
+    'netlist': None,                   # Generated netlist structure
+    'original_image': image,           # Input image (RGB)
+    'image_for_analysis': None,        # Cropped working image
+    'sam2_output': None,               # Binary mask from SAM 2.1
+    'detailed_timings': {},            # Performance metrics
+    # ... additional visualization artifacts
+}
+```
+
+This state enables visualization of intermediate results and debugging.
+
+## Next Steps
+
+Explore each phase in detail:
+
+<CardGroup cols={2}>
+  <Card title="Component Detection" icon="eye" href="/concepts/component-detection">
+    Learn how YOLOv11 achieves 93.13% mAP-50 on circuit components
+  </Card>
+  <Card title="Segmentation" icon="scissors" href="/concepts/segmentation">
+    Discover SAM 2.1's 98.7% accuracy on trace extraction
+  </Card>
+  <Card title="Topology Analysis" icon="project-diagram" href="/concepts/topology-analysis">
+    Understand custom node detection algorithms
+  </Card>
+  <Card title="Netlist Generation" icon="file-code" href="/concepts/netlist-generation">
+    See how structural netlists are enriched with Gemini
+  </Card>
+</CardGroup>

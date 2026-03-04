@@ -1,0 +1,386 @@
+---
+title: 'API Keys'
+description: 'Configure Google Gemini API access for component value extraction'
+icon: 'key'
+---
+
+## Why You Need an API Key
+
+CircuitVision uses **Google Gemini Pro Vision** for intelligent component value extraction through OCR. The Gemini API:
+
+- **Reads component labels** (e.g., "10kΩ", "100µF", "12V")
+- **Cross-validates component types** detected by YOLO
+- **Extracts polarities** and orientations from visual cues
+- **Generates the final netlist** with accurate component values
+
+<Warning>
+  Without a Gemini API key, CircuitVision can only generate initial netlists without component values, making SPICE simulation impossible.
+</Warning>
+
+## Getting a Gemini API Key
+
+<Steps>
+  <Step title="Visit Google AI Studio">
+    Navigate to [Google AI Studio](https://aistudio.google.com/app/apikey) in your web browser.
+    
+    <Tip>
+      Google AI Studio provides free API access with generous quotas for personal and development use.
+    </Tip>
+  </Step>
+
+  <Step title="Sign In with Google Account">
+    Click **Sign in** and use your Google account credentials.
+    
+    If you don't have a Google account, you'll need to create one first.
+  </Step>
+
+  <Step title="Create API Key">
+    In the API Keys section:
+    
+    1. Click **Create API Key**
+    2. Select a Google Cloud project (or create a new one)
+    3. Click **Create API key in existing project** or **Create API key in new project**
+    
+    Your API key will be displayed immediately.
+  </Step>
+
+  <Step title="Copy the API Key">
+    Click the **Copy** button to copy your API key to the clipboard.
+    
+    ```
+    Example format: AIzaSyAbc123def456GHI789jkl012MNO345pqr
+    ```
+    
+    <Warning>
+      **Important**: Save this key securely. For security reasons, you may not be able to view it again after closing the dialog.
+    </Warning>
+  </Step>
+
+  <Step title="Enable the Gemini API">
+    If prompted, enable the Gemini API for your project:
+    
+    1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+    2. Select your project
+    3. Navigate to **APIs & Services** → **Library**
+    4. Search for "Generative Language API"
+    5. Click **Enable**
+  </Step>
+</Steps>
+
+## Setting Environment Variables
+
+Once you have your API key, configure CircuitVision to use it.
+
+### Method 1: Using .env File (Recommended)
+
+The most secure and convenient method:
+
+<Steps>
+  <Step title="Create .env File">
+    In the CircuitVision project root directory, create a file named `.env`:
+    
+    ```bash
+    touch .env
+    ```
+  </Step>
+
+  <Step title="Add Your API Key">
+    Open `.env` in a text editor and add:
+    
+    ```bash .env
+    GEMINI_API_KEY=AIzaSyAbc123def456GHI789jkl012MNO345pqr
+    ```
+    
+    Replace the example key with your actual API key.
+  </Step>
+
+  <Step title="Verify .gitignore">
+    Ensure `.env` is listed in your `.gitignore` file to prevent accidentally committing your API key:
+    
+    ```bash .gitignore
+    .env
+    ```
+    
+    This is crucial for security if you're using version control.
+  </Step>
+</Steps>
+
+<Tip>
+  CircuitVision uses the `python-dotenv` package to automatically load variables from `.env` files. No additional configuration needed!
+</Tip>
+
+### Method 2: System Environment Variables
+
+Set the API key as a system environment variable:
+
+<CodeGroup>
+  ```bash Linux/macOS (Temporary)
+  export GEMINI_API_KEY="AIzaSyAbc123def456GHI789jkl012MNO345pqr"
+  ```
+  
+  ```bash Linux/macOS (Permanent)
+  # Add to ~/.bashrc or ~/.zshrc
+  echo 'export GEMINI_API_KEY="AIzaSyAbc123def456GHI789jkl012MNO345pqr"' >> ~/.bashrc
+  source ~/.bashrc
+  ```
+  
+  ```powershell Windows (PowerShell)
+  $env:GEMINI_API_KEY="AIzaSyAbc123def456GHI789jkl012MNO345pqr"
+  ```
+  
+  ```cmd Windows (CMD)
+  set GEMINI_API_KEY=AIzaSyAbc123def456GHI789jkl012MNO345pqr
+  ```
+  
+  ```cmd Windows (Permanent)
+  setx GEMINI_API_KEY "AIzaSyAbc123def456GHI789jkl012MNO345pqr"
+  ```
+</CodeGroup>
+
+### Method 3: Docker Environment Variables
+
+For Docker deployments:
+
+<CodeGroup>
+  ```yaml docker-compose.yml
+  services:
+    web:
+      environment:
+        - GEMINI_API_KEY=AIzaSyAbc123def456GHI789jkl012MNO345pqr
+  ```
+  
+  ```bash Docker Run Command
+  docker run -e GEMINI_API_KEY="AIzaSyAbc123def456GHI789jkl012MNO345pqr" -p 8501:8501 circuitvision
+  ```
+  
+  ```bash .env File with Docker Compose
+  # In .env file
+  GEMINI_API_KEY=AIzaSyAbc123def456GHI789jkl012MNO345pqr
+  
+  # In docker-compose.yml
+  services:
+    web:
+      env_file:
+        - .env
+  ```
+</CodeGroup>
+
+<Warning>
+  Never hardcode API keys directly in `docker-compose.yml` files that are committed to version control. Use `.env` files or secrets management.
+</Warning>
+
+## Verifying API Key Configuration
+
+Test that your API key is properly configured:
+
+<Steps>
+  <Step title="Launch CircuitVision">
+    Start the application:
+    ```bash
+    streamlit run app.py
+    ```
+  </Step>
+
+  <Step title="Upload a Circuit Image">
+    Upload any circuit diagram and wait for initial analysis to complete.
+  </Step>
+
+  <Step title="Generate Final Netlist">
+    Navigate to the **Netlist** tab and click **Get Final Netlist**.
+    
+    **Success indicators**:
+    - Loading animation appears
+    - Final netlist populates with component values
+    - No error messages displayed
+    
+    **Failure indicators**:
+    - Error message: "API key not configured"
+    - Error message: "Invalid API key"
+    - Final netlist remains empty
+  </Step>
+</Steps>
+
+## Security Best Practices
+
+### Protecting Your API Key
+
+<Warning>
+  **Critical Security Rules**:
+  
+  1. **Never commit API keys to version control** (Git, GitHub, etc.)
+  2. **Never share API keys publicly** (forums, documentation, screenshots)
+  3. **Never hardcode API keys** in source code
+  4. **Rotate keys regularly** if they may have been exposed
+</Warning>
+
+### Using .gitignore
+
+Ensure sensitive files are excluded from version control:
+
+```bash .gitignore
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# API keys and secrets
+*.key
+*.pem
+secrets/
+```
+
+### Key Rotation
+
+If you suspect your API key has been compromised:
+
+<Steps>
+  <Step title="Delete the Old Key">
+    1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
+    2. Find the compromised key
+    3. Click the **Delete** icon
+  </Step>
+
+  <Step title="Create a New Key">
+    Follow the [Getting a Gemini API Key](#getting-a-gemini-api-key) steps to generate a new key.
+  </Step>
+
+  <Step title="Update Your Configuration">
+    Replace the old key in your `.env` file or environment variables with the new one.
+  </Step>
+</Steps>
+
+### API Key Restrictions
+
+For production deployments, restrict API key usage:
+
+1. **IP Address Restrictions**: Limit key usage to specific IP addresses
+2. **Application Restrictions**: Restrict to specific applications or domains
+3. **API Restrictions**: Enable only the Generative Language API
+
+Configure these in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+
+## API Usage and Quotas
+
+### Free Tier Limits
+
+Google Gemini API offers generous free quotas:
+
+| Resource | Free Tier Limit |
+|----------|----------------|
+| Requests per minute | 60 |
+| Requests per day | 1,500 |
+| Tokens per minute | 32,000 |
+
+<Tip>
+  For typical CircuitVision usage (analyzing 10-20 circuits per day), the free tier is more than sufficient.
+</Tip>
+
+### Monitoring Usage
+
+Track your API usage in the [Google Cloud Console](https://console.cloud.google.com/):
+
+1. Select your project
+2. Navigate to **APIs & Services** → **Dashboard**
+3. View request counts and quota consumption
+
+### Handling Rate Limits
+
+If you exceed rate limits:
+
+```python
+Error: 429 Resource Exhausted
+```
+
+**Solutions**:
+- Wait 60 seconds before retrying
+- Upgrade to a paid plan for higher quotas
+- Implement request throttling in production applications
+
+## Troubleshooting
+
+<Accordion title="Error: API key not valid">
+  **Possible causes**:
+  - Incorrect API key format
+  - Key has been deleted or rotated
+  - Generative Language API not enabled
+  
+  **Solutions**:
+  1. Verify the API key in [Google AI Studio](https://aistudio.google.com/app/apikey)
+  2. Ensure no extra spaces or characters in `.env` file
+  3. Enable the Generative Language API in Google Cloud Console
+  4. Generate a new API key if necessary
+</Accordion>
+
+<Accordion title="Error: GEMINI_API_KEY environment variable not found">
+  **Possible causes**:
+  - `.env` file not in the correct directory
+  - Environment variable not set
+  - `python-dotenv` not installed
+  
+  **Solutions**:
+  1. Verify `.env` file is in the project root
+  2. Check that `GEMINI_API_KEY` is spelled correctly (case-sensitive)
+  3. Ensure `python-dotenv` is installed: `pip install python-dotenv`
+  4. Restart the application after setting the variable
+</Accordion>
+
+<Accordion title="Error: 429 Resource Exhausted">
+  **Cause**: API rate limit exceeded
+  
+  **Solutions**:
+  1. Wait 60 seconds before making another request
+  2. Reduce analysis frequency
+  3. Consider upgrading to a paid plan
+</Accordion>
+
+<Accordion title="Gemini returns incorrect component values">
+  **Possible causes**:
+  - Poor image quality
+  - Illegible text labels
+  - Non-standard notation
+  
+  **Solutions**:
+  1. Use higher resolution images
+  2. Ensure component labels are clear and readable
+  3. Use standard notation (10k, 100µF, 12V)
+  4. Check the "Debug: VLM" section in the Netlist tab to see what Gemini extracted
+</Accordion>
+
+## Alternative API Providers
+
+While CircuitVision is optimized for Gemini, the codebase includes support for other vision models:
+
+```python app.py (line 16)
+from src.utils import (
+    # ... other imports
+)
+```
+
+```python requirements.txt
+openai
+groq
+```
+
+<Accordion title="Using OpenAI or Groq (Advanced)">
+  CircuitVision includes experimental support for OpenAI and Groq APIs, though Gemini is recommended for best results.
+  
+  **Configuration**:
+  1. Add `OPENAI_API_KEY` or `GROQ_API_KEY` to your `.env` file
+  2. Modify the VLM client initialization in the source code
+  3. Test thoroughly as prompt engineering may differ
+  
+  <Warning>
+    Using alternative APIs requires code modifications and is not officially supported. Gemini provides the best accuracy for circuit analysis.
+  </Warning>
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Using the App" icon="play" href="/guides/using-the-app">
+    Start analyzing circuit diagrams
+  </Card>
+  <Card title="Docker Setup" icon="docker" href="/guides/docker-setup">
+    Configure API keys in Docker environments
+  </Card>
+</CardGroup>

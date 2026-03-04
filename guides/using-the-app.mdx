@@ -1,0 +1,465 @@
+---
+title: 'Using the App'
+description: 'Complete guide to analyzing circuit diagrams with CircuitVision'
+icon: 'play'
+---
+
+## Application Overview
+
+CircuitVision transforms circuit diagram images into SPICE-compatible netlists through a four-phase AI-powered pipeline:
+
+1. **Component Detection** - YOLOv11 identifies circuit elements
+2. **Topology Analysis** - SAM2 segments wires and finds connection nodes
+3. **Netlist Generation** - Gemini extracts component values via OCR
+4. **Simulation** - ngspice performs DC/AC analysis
+
+## Launching the Application
+
+<Steps>
+  <Step title="Start Streamlit">
+    Launch CircuitVision from your terminal:
+    
+    <CodeGroup>
+      ```bash Local Installation
+      streamlit run app.py
+      ```
+      
+      ```bash Docker
+      docker compose up
+      ```
+    </CodeGroup>
+    
+    The application will open in your default browser at `http://localhost:8501`.
+  </Step>
+
+  <Step title="Wait for Model Initialization">
+    On first launch, you'll see a loading screen:
+    
+    ```
+    Loading Circuit Analyzer models, please wait...
+    ```
+    
+    This typically takes 10-30 seconds as YOLO and SAM2 models are loaded into memory.
+    
+    <Tip>
+      Model loading is cached by Streamlit. Subsequent launches will be much faster.
+    </Tip>
+  </Step>
+
+  <Step title="Verify Ready State">
+    Once loaded, you'll see status badges at the top:
+    
+    - **Models Ready (SAM2 Active)** - All features available
+    - **Models Ready (No SAM2)** - Component detection only (limited features)
+    - **Running on CPU (X cores)** - Indicates CPU-based inference
+  </Step>
+</Steps>
+
+## Uploading Circuit Images
+
+### Supported Image Formats
+
+CircuitVision accepts the following image types:
+- PNG (`.png`)
+- JPEG (`.jpg`, `.jpeg`)
+
+<Warning>
+  Currently supports AC/DC linear circuits. Dependent components (current-controlled sources) are not yet supported.
+</Warning>
+
+### Image Requirements
+
+<Accordion title="Image Quality Guidelines">
+  For best results, your circuit images should:
+  
+  - **Resolution**: Minimum 800x600 pixels (higher is better)
+  - **Clarity**: Sharp, well-lit diagrams without blur
+  - **Contrast**: Clear distinction between components and background
+  - **Orientation**: Automatic rotation based on EXIF data
+  - **Background**: Plain white or light-colored backgrounds work best
+  - **Component Labels**: Clear, readable text for values (e.g., "10kΩ", "100µF")
+</Accordion>
+
+### Upload Process
+
+<Steps>
+  <Step title="Click the File Uploader">
+    In the main interface, click the file upload area:
+    
+    ```
+    Read the help tooltip (?)
+    Browse files
+    ```
+    
+    Click the help icon (`?`) to view supported circuit types.
+  </Step>
+
+  <Step title="Select Your Image">
+    Choose a circuit diagram image from your local filesystem. The image will be automatically uploaded and displayed.
+  </Step>
+
+  <Step title="Automatic Analysis Begins">
+    CircuitVision automatically starts analysis upon upload. You'll see:
+    
+    ```
+    Analyzing... 15 - 20 seconds
+    ```
+    
+    A custom loading animation indicates processing is underway.
+  </Step>
+</Steps>
+
+## Interpreting Results
+
+Analysis results are organized into four tabs:
+
+### 1. Overview Tab
+
+The **Overview** tab displays detection results and performance metrics.
+
+#### Analysis Time
+
+<Accordion title="Understanding Step Timings">
+  Click the expandable "Analysis Time" section to see detailed breakdowns:
+  
+  | Step | Typical Duration | Description |
+  |------|-----------------|-------------|
+  | Initial Component Detection | 2-4s | YOLO identifies all components |
+  | SAM2 Segmentation | 3-6s | Segments conductive traces |
+  | Image Cropping | 0.5-1s | Intelligent crop to circuit area |
+  | Terminal Reclassification | 1-2s | Refines component types |
+  | LLaMA Enrichment | 2-4s | Determines component orientations |
+  | Node Analysis | 2-3s | Identifies connection points |
+  | Initial Netlist Generation | 1-2s | Creates structural netlist |
+  
+  Steps are color-coded: green (fast) to red (slow) relative to the analysis run.
+</Accordion>
+
+#### Original Image
+
+View the uploaded image with metadata:
+
+<Accordion title="Image Details">
+  Expand to see:
+  - **Size**: Pixel dimensions (e.g., `1920x1080`)
+  - **Format**: Image format (PNG, JPEG)
+  - **Mode**: Color mode (RGB, RGBA)
+  - **EXIF Data**: Camera settings, timestamp, GPS (if available)
+  
+  <Tip>
+    EXIF data helps track image sources and is especially useful for photographs of hand-drawn circuits.
+  </Tip>
+</Accordion>
+
+<Accordion title="Cropping Details">
+  Shows how the image was intelligently cropped:
+  - **Crop Applied**: Whether cropping was performed
+  - **Original Dimensions**: Input image size
+  - **Cropped Dimensions**: Output size after cropping
+  - **SAM2 Extent Bbox**: Bounding box defining crop area
+  - **Padding Applied**: Extra space around components (in pixels)
+  - **Text-based Expansion**: Text regions that expanded the crop
+</Accordion>
+
+#### Component Detection
+
+Visualize detected components with bounding boxes and labels.
+
+<Accordion title="Component Statistics">
+  Expand to see a table of detected components:
+  
+  | Component | N | Avg Conf |
+  |-----------|---|----------|
+  | resistor | 5 | 0.94 |
+  | capacitor | 2 | 0.91 |
+  | voltage.dc | 1 | 0.97 |
+  | ground | 1 | 0.99 |
+  
+  - **N**: Number of instances detected
+  - **Avg Conf**: Average confidence score (0-1)
+</Accordion>
+
+<Accordion title="Debug: Original Image">
+  Shows initial YOLO detections on the full, uncropped image before any processing.
+</Accordion>
+
+<Accordion title="Debug: Source Directions">
+  Displays components with semantic direction analysis:
+  - Cropped component images
+  - Detected direction (e.g., `UP`, `DOWN`, `LEFT`, `RIGHT`)
+  - Reasoning (`ARROW`, `SIGN`)
+  - Interpreted type (e.g., `voltage.dc`, `current.ac`)
+</Accordion>
+
+### 2. Node Analysis Tab
+
+Visualizes how CircuitVision identifies connection points.
+
+#### Contours
+
+Shows contour detection on the binary mask after component removal.
+
+#### SAM2 Segmentation
+
+Displays the SAM2-generated mask highlighting all conductive traces.
+
+<Accordion title="Debug Images">
+  Additional visualization layers:
+  - **Emptied Mask**: Binary mask with component areas removed
+  - **Enhanced Mask**: Morphologically processed mask
+  - **Connection Points**: Detected corner points on wires
+  - **Final Node Connections**: Annotated image showing all identified nodes
+</Accordion>
+
+<Tip>
+  If SAM2 is disabled, this tab will show a message indicating limited functionality.
+</Tip>
+
+### 3. Netlist Tab
+
+Generate and view SPICE netlists.
+
+#### Initial Netlist
+
+The **Initial Netlist** is generated automatically after analysis:
+- Based on geometric topology and component detection
+- Contains component types and connections
+- Missing component values (e.g., resistance, capacitance)
+
+```verilog Example Initial Netlist
+R1 1 2
+R2 2 3
+C1 3 0
+V1 1 0
+.end
+```
+
+#### Final Netlist
+
+<Steps>
+  <Step title="Click 'Get Final Netlist'">
+    Click the blue **Get Final Netlist** button. A loading indicator appears while Gemini processes the image.
+  </Step>
+
+  <Step title="Wait for VLM Processing">
+    Gemini analyzes an enumerated image (with component IDs) to extract:
+    - Component types (cross-validation with YOLO)
+    - Component values from labels
+    - Polarities and orientations
+  </Step>
+
+  <Step title="Review the Final Netlist">
+    The **Final Netlist** appears with complete component specifications:
+    
+    ```verilog Example Final Netlist
+    R1 1 2 10k
+    R2 2 3 5.6k
+    C1 3 0 100u
+    V1 1 0 DC 12
+    .end
+    ```
+  </Step>
+</Steps>
+
+<Accordion title="Debug: VLM">
+  Expand to see:
+  - **Image Sent to VLM**: Enumerated circuit image with component IDs
+  - **VLM Analysis Output**: Raw JSON response from Gemini showing extracted values
+</Accordion>
+
+<Accordion title="Initial Netlist Differences">
+  If LLaMA enrichment changed the netlist, this section highlights line-by-line differences.
+</Accordion>
+
+### 4. Simulation Tab
+
+Run SPICE analysis on the final netlist.
+
+<Warning>
+  You must generate the final netlist first (click "Get Final Netlist" in the Netlist tab).
+</Warning>
+
+#### Analysis Type Detection
+
+CircuitVision automatically determines whether to run DC or AC analysis:
+
+- **DC (.op)**: For circuits with DC sources (e.g., `V1 1 0 DC 12`)
+- **AC (.ac)**: For circuits with AC sources (e.g., `V1 1 0 AC 1 0` or `4:-45`)
+
+#### Running DC Analysis
+
+<Steps>
+  <Step title="Verify DC Mode">
+    Check that **Analysis Type** shows: `DC (.op)`
+  </Step>
+
+  <Step title="Click 'Run SPICE Analysis'">
+    Click the **Run SPICE Analysis** button.
+  </Step>
+
+  <Step title="View Operating Point">
+    Results display:
+    - Node voltages
+    - Branch currents
+    - Power dissipation
+  </Step>
+</Steps>
+
+#### Running AC Analysis
+
+<Steps>
+  <Step title="Verify AC Mode">
+    Check that **Analysis Type** shows: `AC (.ac)`
+  </Step>
+
+  <Step title="Set Frequency">
+    Enter the analysis frequency in Hz (default: 60 Hz):
+    ```
+    Frequency for AC Analysis (Hz): 60.00
+    ```
+  </Step>
+
+  <Step title="Run Analysis">
+    Click **Run SPICE Analysis** to compute:
+    - Magnitude and phase of node voltages
+    - Complex currents
+    - Impedance calculations
+  </Step>
+</Steps>
+
+## Downloading Results
+
+While the current version doesn't have a built-in download button, you can:
+
+1. **Copy the netlist**: Select and copy text from the netlist code block
+2. **Save to a `.cir` file**: Paste into a text editor and save with `.cir` extension
+3. **Use in SPICE tools**: Import into LTspice, ngspice, or other SPICE simulators
+
+<Tip>
+  Future versions will include one-click download for netlists and analysis results.
+</Tip>
+
+## Best Practices
+
+### For Optimal Detection
+
+1. **Clear Labels**: Ensure component values are clearly written
+2. **Standard Symbols**: Use conventional circuit symbols
+3. **Minimal Overlap**: Avoid overlapping components
+4. **High Contrast**: Use dark lines on light backgrounds
+5. **Proper Spacing**: Leave adequate space between components
+
+### For Accurate Values
+
+1. **Standard Notation**: Use common formats (e.g., `10k`, `100µF`, `1.5mH`)
+2. **Legible Text**: Write clearly if hand-drawn
+3. **Unit Labels**: Include units (Ω, F, H, V, A)
+4. **Decimal Precision**: Gemini handles both `10k` and `10000`
+
+### Common Pitfalls
+
+<Warning>
+  Avoid these common issues:
+  - **Ambiguous symbols**: Non-standard component representations
+  - **Missing ground**: Always include a ground reference (node 0)
+  - **Overlapping text**: Component labels should not overlap wires
+  - **Low resolution**: Images below 800x600 may have poor detection
+</Warning>
+
+## Troubleshooting
+
+<Accordion title="No components detected">
+  **Possible causes**:
+  - Image quality too low
+  - Non-standard circuit symbols
+  - Insufficient contrast
+  
+  **Solutions**:
+  - Use higher resolution images
+  - Enhance image contrast before upload
+  - Verify circuit uses standard symbols
+</Accordion>
+
+<Accordion title="Incorrect component values">
+  **Possible causes**:
+  - Illegible text
+  - Non-standard notation
+  - OCR misread labels
+  
+  **Solutions**:
+  - Use clear, standard notation (10k, 100µF)
+  - Ensure text is not rotated or distorted
+  - Manually verify and edit netlist if needed
+</Accordion>
+
+<Accordion title="Missing connections">
+  **Possible causes**:
+  - SAM2 not enabled
+  - Faint or broken wire traces
+  - Overlapping components
+  
+  **Solutions**:
+  - Ensure SAM2 models are loaded
+  - Draw clear, continuous wire paths
+  - Increase spacing between components
+</Accordion>
+
+<Accordion title="Simulation errors">
+  **Possible causes**:
+  - Incomplete netlist (missing values)
+  - Invalid SPICE syntax
+  - Floating nodes
+  
+  **Solutions**:
+  - Generate final netlist with Gemini
+  - Check for ground reference
+  - Verify all nodes are connected
+</Accordion>
+
+## Example Workflow
+
+Here's a complete example of analyzing a voltage divider circuit:
+
+<Steps>
+  <Step title="Upload the Image">
+    Upload an image of a simple voltage divider (two resistors in series with a voltage source).
+  </Step>
+
+  <Step title="Review Detection">
+    In the **Overview** tab, verify:
+    - 2 resistors detected
+    - 1 voltage source detected
+    - 1 ground symbol detected
+  </Step>
+
+  <Step title="Check Connections">
+    In the **Node Analysis** tab, confirm:
+    - SAM2 segmented all wire traces
+    - Connection points identified at junctions
+    - Node visualization shows proper topology
+  </Step>
+
+  <Step title="Generate Final Netlist">
+    In the **Netlist** tab:
+    - Click "Get Final Netlist"
+    - Verify values: `R1 1 2 10k`, `R2 2 0 10k`, `V1 1 0 DC 12`
+  </Step>
+
+  <Step title="Run Simulation">
+    In the **Simulation** tab:
+    - Analysis Type: `DC (.op)`
+    - Click "Run SPICE Analysis"
+    - Verify output: Node 1 = 12V, Node 2 = 6V (voltage divider)
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Keys" icon="key" href="/guides/api-keys">
+    Learn how to configure your Gemini API key
+  </Card>
+  <Card title="Advanced Features" icon="rocket" href="/guides/advanced-features">
+    Explore advanced configuration options
+  </Card>
+</CardGroup>

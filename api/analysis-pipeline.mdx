@@ -1,0 +1,373 @@
+---
+title: Analysis Pipeline
+description: High-level pipeline functions for orchestrating circuit analysis in the Streamlit application
+---
+
+## Overview
+
+The `analysis_pipeline` module provides functions that orchestrate the complete circuit analysis workflow. These functions are used by `app.py` to manage session state, run analysis phases, and handle user interactions.
+
+## Pipeline Functions
+
+### process_new_upload()
+
+Processes a newly uploaded circuit image file.
+
+```python
+from src.analysis_pipeline import process_new_upload
+
+process_new_upload(
+    uploaded_file=uploaded_file,
+    upload_dir_path='static/uploads',
+    app_logger=logger
+)
+```
+
+**Parameters:**
+
+<ParamField path="uploaded_file" type="streamlit.UploadedFile" required>
+  The uploaded file object from Streamlit's file_uploader
+</ParamField>
+
+<ParamField path="upload_dir_path" type="str" required>
+  Directory path where uploaded images are saved
+</ParamField>
+
+<ParamField path="app_logger" type="logging.Logger" required>
+  Logger instance for tracking upload events
+</ParamField>
+
+**Behavior:**
+
+- Converts uploaded file bytes to OpenCV image (RGB format)
+- Auto-rotates based on EXIF orientation tag
+- Clears previous analysis results from session state
+- Saves processed image to disk with EXIF data preserved
+- Sets `start_analysis_triggered` flag to initiate analysis
+
+<Note>
+This function modifies `st.session_state.active_results` directly. It clears all previous detection, segmentation, and netlist data.
+</Note>
+
+### run_initial_detection()
+
+Performs initial component detection using YOLOv11.
+
+```python
+from src.analysis_pipeline import run_initial_detection
+
+bboxes = run_initial_detection(
+    current_analyzer=analyzer,
+    active_results=st.session_state.active_results,
+    detailed_timings_dict={},
+    app_logger=logger
+)
+```
+
+**Parameters:**
+
+<ParamField path="current_analyzer" type="CircuitAnalyzer" required>
+  Initialized CircuitAnalyzer instance
+</ParamField>
+
+<ParamField path="active_results" type="Dict" required>
+  Session state dictionary containing 'original_image'
+</ParamField>
+
+<ParamField path="detailed_timings_dict" type="Dict" required>
+  Dictionary to store timing metrics (modified in-place)
+</ParamField>
+
+<ParamField path="app_logger" type="logging.Logger" required>
+  Logger instance
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="bboxes" type="List[Dict]">
+  Detected component bounding boxes after non-maximum suppression
+</ResponseField>
+
+**Updates:**
+
+- `active_results['bboxes_orig_coords_nms']`: Original detections
+- `detailed_timings_dict['YOLO Component Detection']`: Execution time
+
+### run_segmentation_and_cropping()
+
+Performs YOLO-based intelligent cropping followed by SAM 2.1 segmentation.
+
+```python
+from src.analysis_pipeline import run_segmentation_and_cropping
+
+image_analysis, bboxes_analysis, sam_mask = run_segmentation_and_cropping(
+    current_analyzer=analyzer,
+    active_results=st.session_state.active_results,
+    detailed_timings_dict={},
+    app_logger=logger
+)
+```
+
+**Returns:**
+
+<ResponseField name="tuple" type="Tuple[np.ndarray, List[Dict], np.ndarray | None]">
+  - `image_for_analysis`: Cropped image (or original if no crop)
+  - `bboxes_adjusted`: Bounding boxes adjusted to cropped coordinates
+  - `binary_sam_mask`: SAM 2.1 segmentation mask on cropped image
+</ResponseField>
+
+**Updates:**
+
+- `active_results['image_for_analysis']`: Image for downstream analysis
+- `active_results['bboxes']`: Adjusted bounding boxes
+- `active_results['sam2_output']`: Colored SAM mask for display
+- `active_results['crop_debug_info']`: Crop decision metadata
+- `detailed_timings_dict['YOLO-based Image Cropping']`: Crop timing
+- `detailed_timings_dict['SAM2 Segmentation on YOLO-Cropped Image']`: SAM timing
+
+<Info>
+This function implements the two-stage approach: YOLO-based clustering determines the crop window, then SAM 2.1 segments the cropped region for higher precision.
+</Info>
+
+### run_terminal_reclassification()
+
+Reclassifies 'terminal' components based on connectivity analysis.
+
+```python
+from src.analysis_pipeline import run_terminal_reclassification
+
+updated_bboxes = run_terminal_reclassification(
+    current_analyzer=analyzer,
+    image_for_reclass=cropped_image,
+    bboxes_to_reclassify=bboxes_list,
+    detailed_timings_dict={},
+    app_logger=logger
+)
+```
+
+**Returns:**
+
+<ResponseField name="bboxes" type="List[Dict]">
+  Bounding boxes with 'terminal' classes potentially reclassified to 'junction' or 'gnd'
+</ResponseField>
+
+### run_llama_enrichment()
+
+Enriches component bounding boxes with semantic directions using Gemini Vision.
+
+```python
+from src.analysis_pipeline import run_llama_enrichment
+
+enriched_bboxes = run_llama_enrichment(
+    current_analyzer=analyzer,
+    image_for_enrichment=cropped_image,
+    bboxes_to_enrich=bboxes_list,
+    detailed_timings_dict={},
+    app_logger=logger
+)
+```
+
+**Modifies:**
+
+- Adds `semantic_direction` field to bboxes for polarized components
+- Only processes voltage sources, current sources, diodes, and transistors
+
+**Returns:**
+
+<ResponseField name="bboxes" type="List[Dict]">
+  Bounding boxes with semantic direction metadata added
+</ResponseField>
+
+<Tip>
+Semantic directions (e.g., "left_to_right", "top_to_bottom") help orient polarized components correctly in the netlist.
+</Tip>
+
+### run_node_analysis()
+
+Analyzes circuit topology to identify electrical connection nodes.
+
+```python
+from src.analysis_pipeline import run_node_analysis
+
+nodes = run_node_analysis(
+    current_analyzer=analyzer,
+    img_for_analysis=cropped_image,
+    crpd_sam_mask_nodes=binary_mask,
+    bboxes_for_analysis_nodes=adjusted_bboxes,
+    active_results_dict=st.session_state.active_results,
+    detailed_timings_dict={},
+    app_logger=logger
+)
+```
+
+**Returns:**
+
+<ResponseField name="nodes" type="List[Dict] | None">
+  Node connection data or None if analysis fails
+</ResponseField>
+
+**Updates:**
+
+- `active_results_dict['nodes']`: Detected nodes
+- `active_results_dict['node_visualization']`: Visualization image
+- `active_results_dict['node_mask']`: Mask with components removed
+- `active_results_dict['enhanced_mask']`: Enhanced mask
+- `active_results_dict['contour_image']`: Contour visualization
+- `detailed_timings_dict['Node Analysis']`: Execution time
+
+### run_initial_netlist_generation()
+
+Generates the initial (valueless) SPICE netlist and enumerates components.
+
+```python
+from src.analysis_pipeline import run_initial_netlist_generation
+
+netlist = run_initial_netlist_generation(
+    current_analyzer=analyzer,
+    identified_nodes=nodes,
+    img_for_analysis=cropped_image,
+    bboxes_for_enum=adjusted_bboxes,
+    active_results_dict=st.session_state.active_results,
+    detailed_timings_dict={},
+    app_logger=logger
+)
+```
+
+**Returns:**
+
+<ResponseField name="netlist" type="List[Dict] | None">
+  Initial netlist (values are None)
+</ResponseField>
+
+**Updates:**
+
+- `active_results_dict['netlist']`: Initial netlist
+- `active_results_dict['valueless_netlist_text']`: Text representation
+- `active_results_dict['enum_img']`: Image with component IDs drawn
+- `active_results_dict['bbox_ids']`: Bboxes with ID numbers
+- `st.session_state.editable_netlist_content']`: Netlist for editor
+- `detailed_timings_dict['Netlist Generation']`: Execution time
+
+### handle_final_netlist_generation()
+
+Calls Gemini API to extract component values and enriches the netlist.
+
+```python
+from src.analysis_pipeline import handle_final_netlist_generation
+
+handle_final_netlist_generation(
+    current_analyzer=analyzer,
+    active_results_dict=st.session_state.active_results,
+    app_logger=logger
+)
+```
+
+**Behavior:**
+
+- Calls `gemini_labels_openrouter()` with enumerated image
+- Uses `fix_netlist()` to merge Gemini data with structural netlist
+- Updates session state with final netlist
+- Sets `final_netlist_generated` flag
+- Triggers Streamlit rerun
+
+**Updates:**
+
+- `active_results_dict['netlist']`: Final netlist with values
+- `active_results_dict['netlist_text']`: Complete SPICE text
+- `active_results_dict['vlm_stage2_output']`: Raw Gemini response
+- `st.session_state.final_netlist_generated']`: True
+
+<Warning>
+This function requires `GEMINI_API_KEY` to be set. If the API call fails, the netlist remains in its valueless state.
+</Warning>
+
+### log_analysis_summary()
+
+Logs a summary of analysis results (component counts, node count).
+
+```python
+from src.analysis_pipeline import log_analysis_summary
+
+log_analysis_summary(
+    active_results_dict=st.session_state.active_results,
+    app_logger=logger,
+    configured_log_level='INFO'
+)
+```
+
+## Complete Workflow Example
+
+```python
+import streamlit as st
+import logging
+from src.circuit_analyzer import CircuitAnalyzer
+from src.analysis_pipeline import (
+    process_new_upload,
+    run_initial_detection,
+    run_segmentation_and_cropping,
+    run_terminal_reclassification,
+    run_llama_enrichment,
+    run_node_analysis,
+    run_initial_netlist_generation,
+    handle_final_netlist_generation
+)
+
+# Setup
+logger = logging.getLogger('circuit_analyzer')
+analyzer = CircuitAnalyzer(debug=False)
+detailed_timings = {}
+
+# Step 1: Upload
+uploaded_file = st.file_uploader("Upload circuit image", type=['png', 'jpg'])
+if uploaded_file:
+    process_new_upload(uploaded_file, 'static/uploads', logger)
+
+# Step 2: Initial detection
+bboxes_orig = run_initial_detection(
+    analyzer, st.session_state.active_results, detailed_timings, logger
+)
+
+# Step 3: Crop and segment
+image_analysis, bboxes_adjusted, sam_mask = run_segmentation_and_cropping(
+    analyzer, st.session_state.active_results, detailed_timings, logger
+)
+
+# Step 4: Reclassify terminals
+bboxes_adjusted = run_terminal_reclassification(
+    analyzer, image_analysis, bboxes_adjusted, detailed_timings, logger
+)
+
+# Step 5: Enrich with semantic directions
+bboxes_adjusted = run_llama_enrichment(
+    analyzer, image_analysis, bboxes_adjusted, detailed_timings, logger
+)
+
+# Step 6: Topology analysis
+nodes = run_node_analysis(
+    analyzer, image_analysis, sam_mask, bboxes_adjusted,
+    st.session_state.active_results, detailed_timings, logger
+)
+
+# Step 7: Initial netlist
+netlist = run_initial_netlist_generation(
+    analyzer, nodes, image_analysis, bboxes_adjusted,
+    st.session_state.active_results, detailed_timings, logger
+)
+
+# Step 8: Final netlist (on button click)
+if st.button('Get Final Netlist'):
+    handle_final_netlist_generation(
+        analyzer, st.session_state.active_results, logger
+    )
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="CircuitAnalyzer" icon="microchip" href="/api/circuit-analyzer">
+    Core analysis class and methods
+  </Card>
+  <Card title="Utilities" icon="wrench" href="/api/utils">
+    Helper functions for NMS and Gemini calls
+  </Card>
+</CardGroup>

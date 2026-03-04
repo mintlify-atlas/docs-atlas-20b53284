@@ -1,0 +1,191 @@
+---
+title: 'YOLOv11 Training'
+description: 'Training YOLOv11 for circuit component detection with 93.13% mAP-50'
+---
+
+## Overview
+
+CircuitVision uses a fine-tuned **YOLOv11** model specifically trained on electrical circuit component datasets to achieve robust component detection. The model achieves a **mean average precision (mAP-50) of 93.13%**, which is on par with state-of-the-art object detection models.
+
+<Info>
+The complete YOLOv11 training pipeline and inference code is available in our Kaggle notebook.
+</Info>
+
+[![Open in Kaggle](https://img.shields.io/badge/Open%20in%20Kaggle-20BEFF?logo=kaggle&logoColor=fff)](https://www.kaggle.com/code/mah01sam/yolov11-training-and-project-pipeline)
+
+## Model Architecture
+
+YOLOv11 is the latest iteration of the YOLO (You Only Look Once) family, offering:
+
+- **Single-stage detection**: Fast inference suitable for real-time applications
+- **Multi-scale predictions**: Detects components of varying sizes
+- **Anchor-free design**: Better generalization to diverse circuit diagrams
+
+## Dataset Preparation
+
+The training dataset includes diverse electrical circuit components:
+
+### Component Classes
+
+The model is trained to detect various electrical components including:
+
+- **Passive components**: Resistors, capacitors, inductors (including adjustable and polarized variants)
+- **Active components**: Diodes (standard, LED, Zener), transistors (BJT, FET), thyristors
+- **Sources**: Voltage sources (AC, DC, battery, dependent), current sources (DC, AC, dependent)
+- **Integrated circuits**: Op-amps, voltage regulators, NE555, Schmitt triggers
+- **Other elements**: Transformers, switches, varistors, terminals, ground (GND, VSS)
+- **Connection elements**: Junctions, crossovers
+- **Text and explanatory elements**: For context extraction
+
+<Note>
+The model excludes certain classes like optical components, mechanical elements, and some logic gates to focus on core electrical circuit analysis.
+</Note>
+
+### Data Format
+
+The training data follows the standard YOLO annotation format:
+
+```txt
+<class_id> <x_center> <y_center> <width> <height>
+```
+
+All coordinates are normalized to [0, 1] relative to image dimensions.
+
+## Training Pipeline
+
+### Hyperparameters
+
+The YOLOv11 model was trained with the following configuration:
+
+<Accordion title="Key Training Parameters">
+
+```python
+model = YOLO('yolov11.pt')  # Start from pretrained weights
+
+results = model.train(
+    data='circuit_dataset.yaml',
+    epochs=100,
+    imgsz=640,
+    batch=16,
+    device=0,  # GPU training
+    patience=20,  # Early stopping
+    save=True,
+    project='circuit_yolo',
+    name='yolov11_circuit'
+)
+```
+
+**Parameter Explanations:**
+- `epochs=100`: Maximum training iterations with early stopping
+- `imgsz=640`: Input image size (resized while maintaining aspect ratio)
+- `batch=16`: Batch size (adjust based on GPU memory)
+- `patience=20`: Stop if no improvement for 20 epochs
+
+</Accordion>
+
+### Training Process
+
+1. **Initialization**: Load pretrained YOLOv11 weights
+2. **Data augmentation**: Automatic augmentation including rotation, scaling, color jittering
+3. **Fine-tuning**: Train all layers on circuit-specific dataset
+4. **Validation**: Continuous monitoring on validation set
+5. **Early stopping**: Prevent overfitting with patience mechanism
+
+### Post-Processing
+
+After detection, the model applies:
+
+- **Non-Maximum Suppression (NMS)**: Eliminates redundant detections based on confidence scores
+- **Confidence filtering**: Only keeps detections above threshold
+- **Bounding box adjustment**: Coordinates are recalculated after intelligent cropping
+
+```python
+# Example from circuit_analyzer.py:268
+results = self.yolo.predict(image, verbose=True)
+results = results[0]
+img_classes_ids = results.boxes.cls.cpu().numpy().tolist()
+img_classes_names = [results.names[int(num_id)] for num_id in img_classes_ids]
+confidences = results.boxes.conf.cpu().numpy().tolist()
+boxes_coords = results.boxes.xyxy.cpu().numpy().tolist()
+```
+
+## Performance Metrics
+
+### Results
+
+- **mAP-50**: 93.13%
+- **mAP-50-95**: Competitive with state-of-the-art models
+- **Inference speed**: Real-time on modern GPUs
+- **Robustness**: Works on hand-drawn, photographed, and digital schematics
+
+<Card title="State-of-the-Art Performance" icon="trophy">
+The 93.13% mAP-50 score demonstrates that our fine-tuned model performs on par with state-of-the-art object detection models, specifically optimized for electrical circuit components.
+</Card>
+
+## Model Integration
+
+In CircuitVision, the YOLO model is initialized as:
+
+```python
+from ultralytics import YOLO
+
+class CircuitAnalyzer():
+    def __init__(self, yolo_path='models/YOLO/best_large_model_yolo.pt', ...):
+        self.yolo = YOLO(yolo_path)
+        # ... additional setup
+```
+
+### Detection Workflow
+
+1. **Upload circuit image** → Preprocessed (EXIF rotation, etc.)
+2. **YOLO inference** → Detect all component bounding boxes
+3. **NMS filtering** → Remove duplicate detections
+4. **Coordinate adjustment** → Adjust boxes after intelligent cropping
+5. **Pass to next stage** → Feed to SAM 2 for segmentation
+
+## Training Tips
+
+<Accordion title="Best Practices">
+
+### Dataset Quality
+- Use diverse circuit styles (hand-drawn, printed, digital)
+- Include various lighting conditions and image qualities
+- Ensure balanced representation of all component classes
+- Annotate carefully with tight bounding boxes
+
+### Hyperparameter Tuning
+- Start with pretrained weights for faster convergence
+- Use larger `imgsz` (e.g., 1024) for small component detection
+- Adjust `batch` size based on GPU memory
+- Monitor validation metrics to prevent overfitting
+
+### Data Augmentation
+- YOLO's built-in augmentation is usually sufficient
+- Consider custom augmentation for specific use cases (e.g., rotation for hand-drawn circuits)
+
+</Accordion>
+
+## Download Models
+
+To download the trained YOLO models for CircuitVision:
+
+```bash
+python download_models.py
+```
+
+This script creates `models/YOLO/` directory and downloads the fine-tuned weights.
+
+<Note>
+Ensure you have `requests` and `gdown` installed: `pip install requests gdown`
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="SAM 2 Training" icon="scissors" href="/training/sam2-training">
+    Learn about segmentation model training
+  </Card>
+  <Card title="Dataset Management" icon="database" href="/training/datasets">
+    Explore dataset requirements and formats
+  </Card>
+</CardGroup>

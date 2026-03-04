@@ -1,0 +1,330 @@
+---
+title: Utilities
+description: Helper functions for non-maximum suppression, Gemini API calls, and image processing
+---
+
+## Overview
+
+The `utils` module provides utility functions used throughout CircuitVision for NMS, Gemini API integration, image annotation, and EXIF handling.
+
+## Non-Maximum Suppression
+
+### non_max_suppression_by_confidence()
+
+Filters overlapping bounding boxes based on confidence scores.
+
+```python
+from src.utils import non_max_suppression_by_confidence
+
+filtered_bboxes = non_max_suppression_by_confidence(
+    bboxes=detected_components,
+    iou_threshold=0.6
+)
+```
+
+**Parameters:**
+
+<ParamField path="bboxes" type="List[Dict]" required>
+  List of bounding boxes with 'confidence', 'xmin', 'ymin', 'xmax', 'ymax' fields
+</ParamField>
+
+<ParamField path="iou_threshold" type="float" default="0.6">
+  Intersection-over-union threshold for suppression (0.0 to 1.0)
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="filtered_bboxes" type="List[Dict]">
+  Bounding boxes after suppression, sorted by confidence descending
+</ResponseField>
+
+<Note>
+Keeps the box with the highest confidence when overlap exceeds the IOU threshold.
+</Note>
+
+### non_max_suppression_by_area()
+
+Filters overlapping bounding boxes based on box area (larger boxes suppress smaller ones).
+
+```python
+from src.utils import non_max_suppression_by_area
+
+filtered_bboxes = non_max_suppression_by_area(
+    bboxes=detected_components,
+    iou_threshold=0.6
+)
+```
+
+**Parameters:**
+
+<ParamField path="bboxes" type="List[Dict]" required>
+  List of bounding boxes
+</ParamField>
+
+<ParamField path="iou_threshold" type="float" default="0.6">
+  IOU threshold for suppression
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="filtered_bboxes" type="List[Dict]">
+  Bounding boxes after area-based suppression
+</ResponseField>
+
+<Tip>
+Useful when larger boxes are more reliable (e.g., after enumeration to avoid text bboxes overlapping components).
+</Tip>
+
+## Gemini API Integration
+
+### gemini_labels_openrouter()
+
+Calls Google Gemini Vision API to extract component values from an enumerated circuit image.
+
+```python
+from src.utils import gemini_labels_openrouter
+
+component_info = gemini_labels_openrouter(
+    image=enumerated_image,
+    model="gemini-2.0-flash-exp"
+)
+```
+
+**Parameters:**
+
+<ParamField path="image" type="np.ndarray" required>
+  Enumerated circuit image (RGB or BGR) with component ID numbers visible
+</ParamField>
+
+<ParamField path="model" type="str" default="gemini-2.0-flash-exp">
+  Gemini model name to use
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="component_info" type="List[Dict] | None">
+  List of component dictionaries or None if parsing fails:
+  
+  <Expandable title="component structure">
+    <ResponseField name="id" type="str">
+      Component ID number from the enumerated image
+    </ResponseField>
+    <ResponseField name="class" type="str">
+      Component class (e.g., 'resistor', 'capacitor', 'voltage.dc')
+    </ResponseField>
+    <ResponseField name="value" type="str | None">
+      Component value (e.g., '10k', '100u', '12') or None if not visible
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Behavior:**
+
+- Converts image to base64 PNG
+- Sends to Gemini with a detailed prompt (see `utils.py:42-99`)
+- Parses response as Python list using `ast.literal_eval()`
+- Falls back to JSON parsing if literal eval fails
+- Returns None if parsing fails or API error occurs
+
+<Warning>
+Requires `GEMINI_API_KEY` environment variable. API calls count against your quota.
+</Warning>
+
+**Prompt Template:**
+
+The prompt instructs Gemini to:
+1. Identify components by their red ID numbers
+2. Extract component values with metric prefixes (e.g., '10k', '2.2M')
+3. Use specific class names from the provided dictionary
+4. Return a Python list of dictionaries
+
+<Accordion title="Component classes recognized by Gemini">
+```python
+components_dict = {
+    'gnd': 'Ground',
+    'voltage.ac': 'AC Voltage source (format phasor as magnitude:phase)',
+    'voltage.dc': 'DC Voltage source (polarity is important)',
+    'voltage.battery': 'Battery Voltage source',
+    'resistor': 'Resistor',
+    'voltage.dependent': 'Voltage-Dependent Source',
+    'current.dc': 'DC Current (direction is important)',
+    'current.dependent': 'Current-Dependent Source',
+    'capacitor': 'Capacitor',
+    'inductor': 'Inductor',
+    'diode': 'Diode (orientation is important)'
+}
+```
+</Accordion>
+
+## Image Annotation
+
+### create_annotated_image()
+
+Draws bounding boxes and labels on a circuit image.
+
+```python
+from src.utils import create_annotated_image
+
+annotated = create_annotated_image(
+    image=original_image,
+    bboxes=detected_components
+)
+```
+
+**Parameters:**
+
+<ParamField path="image" type="np.ndarray" required>
+  Circuit image (RGB or BGR format)
+</ParamField>
+
+<ParamField path="bboxes" type="List[Dict]" required>
+  Bounding boxes with 'class', 'xmin', 'ymin', 'xmax', 'ymax' fields
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="annotated_image" type="np.ndarray">
+  Image with colored bounding boxes and class labels drawn
+</ResponseField>
+
+### calculate_component_stats()
+
+Counts detected components by class.
+
+```python
+from src.utils import calculate_component_stats
+
+stats = calculate_component_stats(bboxes=detected_components)
+# Returns: {'resistor': 5, 'capacitor': 3, 'voltage.dc': 1, ...}
+```
+
+**Parameters:**
+
+<ParamField path="bboxes" type="List[Dict]" required>
+  Bounding boxes with 'class' field
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="stats" type="Dict[str, int]">
+  Dictionary mapping component class names to counts
+</ResponseField>
+
+## EXIF Handling
+
+### format_exif_data()
+
+Extracts and formats EXIF metadata from an image.
+
+```python
+from src.utils import format_exif_data
+from PIL import Image
+
+image_pil = Image.open('circuit.jpg')
+exif_info = format_exif_data(image_pil)
+```
+
+**Parameters:**
+
+<ParamField path="image" type="PIL.Image.Image" required>
+  PIL Image object with EXIF data
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="exif_data" type="Dict[str, Any]">
+  Dictionary of EXIF tags (e.g., 'DateTime', 'Make', 'Model', 'Orientation')
+</ResponseField>
+
+## Class Loading
+
+### load_classes()
+
+Loads component class definitions from `classes.json`.
+
+```python
+from src.utils import load_classes
+
+classes = load_classes('classes.json')
+# Returns: {'gnd': 0, 'voltage.ac': 1, 'resistor': 2, ...}
+```
+
+**Parameters:**
+
+<ParamField path="json_path" type="str" default="classes.json">
+  Path to the JSON file containing class definitions
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="classes" type="Dict[str, int]">
+  Dictionary mapping class names to integer IDs
+</ResponseField>
+
+## CSS Loading
+
+### load_css()
+
+Injects custom CSS into the Streamlit app.
+
+```python
+from src.utils import load_css
+
+load_css('static/css/main.css')
+```
+
+**Parameters:**
+
+<ParamField path="file_name" type="str" required>
+  Path to the CSS file
+</ParamField>
+
+**Behavior:**
+
+- Reads CSS file content
+- Injects it using `st.markdown()` with `unsafe_allow_html=True`
+
+## Example: Complete Preprocessing Pipeline
+
+```python
+import cv2
+from src.utils import (
+    non_max_suppression_by_confidence,
+    create_annotated_image,
+    calculate_component_stats
+)
+from src.circuit_analyzer import CircuitAnalyzer
+
+# Load and analyze
+analyzer = CircuitAnalyzer()
+image = cv2.imread('circuit.png')
+image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+# Detect components
+raw_bboxes = analyzer.bboxes(image_rgb)
+print(f"Raw detections: {len(raw_bboxes)}")
+
+# Apply NMS
+filtered_bboxes = non_max_suppression_by_confidence(raw_bboxes, iou_threshold=0.6)
+print(f"After NMS: {len(filtered_bboxes)}")
+
+# Calculate statistics
+stats = calculate_component_stats(filtered_bboxes)
+for component_class, count in stats.items():
+    print(f"{component_class}: {count}")
+
+# Create visualization
+annotated_image = create_annotated_image(image_rgb, filtered_bboxes)
+cv2.imwrite('annotated.png', cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="CircuitAnalyzer" icon="microchip" href="/api/circuit-analyzer">
+    Core analysis class using these utilities
+  </Card>
+  <Card title="Analysis Pipeline" icon="diagram-next" href="/api/analysis-pipeline">
+    Pipeline functions calling these utilities
+  </Card>
+</CardGroup>

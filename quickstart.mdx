@@ -1,80 +1,272 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quickstart'
+description: 'Get started with CircuitVision in under 10 minutes'
 ---
 
-## Get started in three steps
+Get CircuitVision up and running in under 10 minutes. This guide walks you through installation, setup, and analyzing your first circuit diagram.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, ensure you have the following installed on your system:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Note>
+**System Requirements:**
+- Python 3.8 or higher
+- pip package manager
+- 4GB RAM minimum (8GB recommended)
+- GPU is optional but improves performance
+- API key for Google Gemini (for component value extraction)
+</Note>
 
-### Step 2: Deploy your changes
+## Installation
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Clone the repository">
+    Start by cloning the CircuitVision repository from GitHub:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```bash
+    git clone https://github.com/JKc66/CircuitVision.git
+    cd CircuitVision
+    ```
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Install dependencies">
+    Install all required Python packages using the provided requirements file:
 
-### Step 3: Go live
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    This will install key dependencies including:
+    - `streamlit` - Web application framework
+    - `torch` and `torchvision` - Deep learning models
+    - `ultralytics` - YOLOv11 for component detection
+    - `google-genai` - Gemini API for OCR and value extraction
+    - `opencv-python` and `Pillow` - Image processing
+    - `PySpice` - Circuit simulation
+    - SAM2 from Facebook Research
+  </Step>
+
+  <Step title="Download AI models">
+    Run the model download script to fetch the pre-trained YOLO and SAM2 models:
+
+    ```bash
+    python download_models.py
+    ```
+
+    This script will:
+    - Create `models/YOLO`, `models/SAM2`, and `models/configs` directories
+    - Download the fine-tuned YOLOv11 model for component detection
+    - Download the base SAM2.1 model and configuration
+    - Download the fine-tuned SAM2 model for circuit segmentation
+
+    <Accordion title="What models are being downloaded?">
+      The download script fetches three essential models:
+      
+      1. **YOLOv11 (Fine-tuned)** - `models/YOLO/best_large_model_yolo.pt`
+         - Trained specifically on electrical circuit components
+         - Achieves 93.13% mAP-50 accuracy
+      
+      2. **SAM2 Base Model** - `models/SAM2/sam2.1_hiera_large.pt`
+         - Meta's Segment Anything Model 2.1
+         - Used for precise wire and trace segmentation
+      
+      3. **SAM2 Fine-tuned** - `models/SAM2/best_miou_model_SAM_latest.pth`
+         - Custom-trained for circuit segmentation
+         - Achieves 98.7% accuracy on circuit traces
+      
+      4. **SAM2 Config** - `models/configs/sam2.1_hiera_l.yaml`
+         - Configuration file for the SAM2 model
+    </Accordion>
+
+    <Warning>
+    The model files are large (several GB total). Ensure you have a stable internet connection and sufficient disk space.
+    </Warning>
+  </Step>
+
+  <Step title="Set up your API key">
+    CircuitVision uses Google Gemini for intelligent component value extraction. Create a `.env` file in the project root:
+
+    ```bash
+    echo "GEMINI_API_KEY=your_api_key_here" > .env
+    ```
+
+    Replace `your_api_key_here` with your actual Gemini API key.
+
+    <Tip>
+    Don't have a Gemini API key? Get one for free at [Google AI Studio](https://aistudio.google.com/app/apikey).
+    </Tip>
+  </Step>
+</Steps>
+
+## Launch CircuitVision
+
+Start the Streamlit application:
+
+```bash
+streamlit run app.py
+```
+
+The application will launch in your default web browser at `http://localhost:8501`.
+
+<CodeGroup>
+```bash Terminal Output
+You can now view your Streamlit app in your browser.
+
+Local URL: http://localhost:8501
+Network URL: http://192.168.1.100:8501
+```
+
+```python app.py
+import streamlit as st
+from src.circuit_analyzer import CircuitAnalyzer
+
+# Initialize the circuit analyzer
+analyzer = CircuitAnalyzer(
+    yolo_path='models/YOLO/best_large_model_yolo.pt',
+    sam2_config_path='models/configs/sam2.1_hiera_l.yaml',
+    sam2_base_checkpoint_path='models/SAM2/sam2.1_hiera_large.pt',
+    sam2_finetuned_checkpoint_path='models/SAM2/best_miou_model_SAM_latest.pth',
+    use_sam2=True,
+    debug=True
+)
+```
+</CodeGroup>
+
+## Analyze your first circuit
+
+<Steps>
+  <Step title="Upload a circuit image">
+    Once the app loads, you'll see a file uploader. Click "Browse files" and select a circuit diagram image.
+
+    **Supported formats:**
+    - PNG (.png)
+    - JPEG (.jpg, .jpeg)
+
+    <Note>
+    CircuitVision works best with clear, well-lit images of AC/DC linear circuits. Dependent sources are not yet supported.
+    </Note>
+  </Step>
+
+  <Step title="Automatic analysis begins">
+    After uploading, CircuitVision automatically starts the analysis pipeline:
+
+    1. **Component Detection** (2-3 seconds) - YOLOv11 identifies resistors, capacitors, voltage sources, etc.
+    2. **Image Cropping** (1 second) - Intelligent crop focuses on the circuit area
+    3. **Wire Segmentation** (3-5 seconds) - SAM2 segments conductive traces
+    4. **Node Analysis** (2-3 seconds) - Custom algorithm identifies connection points
+    5. **Netlist Generation** (5-7 seconds) - Creates initial structural netlist
+    6. **Value Extraction** (3-5 seconds) - Gemini reads component values via OCR
+
+    <Tip>
+    The entire analysis typically completes in 15-20 seconds. You'll see a loading animation with the estimated time.
+    </Tip>
+  </Step>
+
+  <Step title="Explore the results">
+    Navigate through the four result tabs:
+
+    **🔎 Overview**
+    - View the original image and annotated component detections
+    - See analysis timing breakdown
+    - Check component statistics and confidence scores
+
+    **🔗 Node Analysis**
+    - Visualize detected contours and SAM2 segmentation
+    - Review connection points and node mappings
+
+    **📝 Netlist**
+    - View the initial structural netlist
+    - Click "Get Final Netlist" to add component values via Gemini
+    - Export SPICE-compatible netlist
+
+    **⚡ Simulation**
+    - Run DC operating point analysis (.op)
+    - Perform AC frequency analysis (.ac)
+    - View node voltages and branch currents
+  </Step>
+</Steps>
+
+## Example workflow
+
+Here's what happens behind the scenes when you upload a circuit:
+
+```python
+# 1. Image preprocessing
+uploaded_file = st.file_uploader("Upload circuit", type=['png', 'jpg', 'jpeg'])
+
+# 2. Component detection with YOLOv11
+bboxes = analyzer.yolo_model.predict(image)
+
+# 3. Intelligent cropping based on component locations
+cropped_image = crop_to_circuit_area(image, bboxes)
+
+# 4. SAM2 segmentation for wire traces
+mask = analyzer.sam2_predictor.predict(cropped_image)
+
+# 5. Node connection analysis
+nodes = analyzer.analyze_nodes(mask, bboxes)
+
+# 6. Generate initial netlist
+netlist = analyzer.generate_netlist(nodes, bboxes)
+
+# 7. Enhance with Gemini for component values
+final_netlist = analyzer.enrich_with_gemini(netlist, image)
+```
+
+## Alternative: Docker installation
+
+For a consistent environment across different systems, use Docker:
+
+<CodeGroup>
+```bash Build Image
+docker build -t circuitvision .
+```
+
+```bash Run with Docker Compose
+docker compose up --build
+```
+
+```bash Run in Detached Mode
+docker compose up -d --build
+```
+
+```yaml docker-compose.yml
+version: '3.8'
+services:
+  circuitvision:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./models:/app/models
+```
+</CodeGroup>
+
+<Warning>
+Make sure your `GEMINI_API_KEY` is available to the Docker environment via an `.env` file or environment variables in `docker-compose.yml`.
+</Warning>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Now that you have CircuitVision running, explore these resources:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core Concepts" icon="brain" href="/concepts/pipeline-overview">
+    Learn about the AI models and algorithms powering CircuitVision
+  </Card>
+  
+  <Card title="User Guide" icon="book" href="/guides/installation">
+    Detailed guides on analysis features and customization
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api/circuit-analyzer">
+    Explore the CircuitAnalyzer API and integration options
+  </Card>
+  
+  <Card title="Model Training" icon="graduation-cap" href="/training/yolo-training">
+    Fine-tune models on your own datasets
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

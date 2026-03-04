@@ -1,0 +1,316 @@
+---
+title: 'SAM 2 Fine-Tuning'
+description: 'Fine-tuning Segment Anything Model 2 with LoRA for circuit segmentation achieving 98.7% accuracy'
+---
+
+## Overview
+
+CircuitVision uses a **fine-tuned Segment Anything Model 2 (SAM 2)** for precise segmentation of conductive traces in circuit diagrams. Through **LoRA (Low-Rank Adaptation)** fine-tuning, the model achieves an impressive **98.7% accuracy** on circuit segmentation from a dataset of only **267 images**.
+
+<Info>
+This work demonstrates the power of parameter-efficient fine-tuning and will be submitted to a journal soon.
+</Info>
+
+[![Open in Kaggle](https://img.shields.io/badge/Open%20in%20Kaggle-20BEFF?logo=kaggle&logoColor=fff)](https://www.kaggle.com/code/mah01sam/training-sam-2/notebook?scriptVersionId=237405492)
+
+## Why SAM 2 for Circuits?
+
+The Segment Anything Model 2 is ideal for circuit analysis because:
+
+- **Zero-shot capability**: Pretrained on diverse image types
+- **High precision**: Generates detailed binary masks of traces
+- **Efficient fine-tuning**: LoRA enables training with limited data
+- **Automatic prompting**: No manual point/box prompts needed for our use case
+
+## LoRA Fine-Tuning Strategy
+
+### What is LoRA?
+
+LoRA (Low-Rank Adaptation) is a parameter-efficient fine-tuning technique that:
+
+- **Freezes** the original model weights
+- **Injects** trainable low-rank matrices into attention layers
+- **Reduces** the number of trainable parameters by >90%
+- **Enables** training on smaller datasets with less GPU memory
+
+### Architecture Modifications
+
+CircuitVision's SAM 2 implementation includes custom modifications beyond standard LoRA:
+
+<Accordion title="LoRA Target Modules">
+
+```python
+base_parts = [
+    # Self-attention layers (both transformer layers)
+    "sam_mask_decoder.transformer.layers.0.self_attn.k_proj",
+    "sam_mask_decoder.transformer.layers.0.self_attn.q_proj",
+    "sam_mask_decoder.transformer.layers.0.self_attn.v_proj",
+    "sam_mask_decoder.transformer.layers.0.self_attn.out_proj",
+    "sam_mask_decoder.transformer.layers.1.self_attn.k_proj",
+    "sam_mask_decoder.transformer.layers.1.self_attn.q_proj",
+    "sam_mask_decoder.transformer.layers.1.self_attn.v_proj",
+    "sam_mask_decoder.transformer.layers.1.self_attn.out_proj",
+    
+    # Cross-attention layers (token to image)
+    "sam_mask_decoder.transformer.layers.0.cross_attn_token_to_image.k_proj",
+    "sam_mask_decoder.transformer.layers.0.cross_attn_token_to_image.q_proj",
+    "sam_mask_decoder.transformer.layers.0.cross_attn_token_to_image.v_proj",
+    "sam_mask_decoder.transformer.layers.0.cross_attn_token_to_image.out_proj",
+    # ... (layers 1 similar)
+    
+    # MLP layers
+    "sam_mask_decoder.transformer.layers.0.mlp.layers.0",
+    "sam_mask_decoder.transformer.layers.0.mlp.layers.1",
+    # ... (layers 1 similar)
+]
+
+added_parts = [
+    # IoU prediction head
+    "sam_mask_decoder.iou_prediction_head.layers.2",
+    
+    # Decoder convolutions
+    "sam_mask_decoder.conv_s0",
+    "sam_mask_decoder.conv_s1",
+    
+    # Encoder neck convolutions
+    "image_encoder.neck.convs.2.conv",
+    "image_encoder.neck.convs.3.conv",
+    
+    # Image encoder blocks (downsampling)
+    "image_encoder.trunk.blocks.44.attn.qkv",
+    "image_encoder.trunk.blocks.44.mlp.layers.0",
+    "image_encoder.trunk.blocks.44.proj",
+    "image_encoder.trunk.blocks.47.attn.qkv",
+    "image_encoder.trunk.blocks.47.mlp.layers.0",
+    
+    # Cross-attention (image to token)
+    "sam_mask_decoder.transformer.layers.0.cross_attn_image_to_token.q_proj",
+    "sam_mask_decoder.transformer.layers.0.cross_attn_image_to_token.k_proj",
+    "sam_mask_decoder.transformer.layers.0.cross_attn_image_to_token.v_proj",
+    # ... (layers 1 similar)
+]
+```
+
+From `circuit_analyzer.py:156-199`
+
+</Accordion>
+
+### LoRA Hyperparameters
+
+```python
+self.sam2_model = get_modified_sam2(
+    model_cfg_path=sam2_config_path,
+    checkpoint_path=sam2_base_checkpoint_path,
+    device=device,
+    use_high_res_features=True,
+    use_peft=True,
+    lora_rank=4,              # Low rank for efficiency
+    lora_alpha=16,            # Scaling factor
+    lora_dropout=0.3,         # Prevent overfitting
+    lora_target_modules=base_parts + added_parts,
+    use_wrapper=True,
+    trainable_embedding_r=4,  # Trainable embedding rank
+    use_refinement_layer=True,
+    refinement_kernels=[3, 5, 7, 11],  # Multi-scale refinement
+    kernel_channels=2,
+    weight_dice=0.5,          # Loss weights
+    weight_focal=0.4,
+    weight_iou=0.3,
+    weight_freq=0.1,
+    focal_alpha=0.25
+)
+```
+
+<Note>
+**Key Parameters:**
+- `lora_rank=4`: Balance between capacity and efficiency
+- `lora_alpha=16`: Controls the magnitude of LoRA updates
+- `lora_dropout=0.3`: Regularization for small dataset
+- `use_refinement_layer=True`: Custom layer for better trace boundaries
+</Note>
+
+## Training Pipeline
+
+### Dataset Preparation
+
+The SAM 2 model was trained on **267 carefully annotated circuit images** with:
+
+- **Binary masks**: White traces on black background
+- **Diverse sources**: Hand-drawn, printed schematics, photographs
+- **Various complexities**: Simple to complex multi-component circuits
+- **Data augmentation**: Rotation, scaling, brightness adjustments
+
+<Info>
+Despite the small dataset size, LoRA fine-tuning enabled 98.7% accuracy, demonstrating excellent data efficiency.
+</Info>
+
+### Loss Function
+
+A composite loss function optimizes multiple objectives:
+
+```python
+total_loss = (
+    0.5 * dice_loss +      # Overlap-based loss
+    0.4 * focal_loss +     # Handles class imbalance
+    0.3 * iou_loss +       # IoU-based metric
+    0.1 * freq_loss        # Frequency domain loss
+)
+```
+
+- **Dice Loss (0.5)**: Measures overlap between prediction and ground truth
+- **Focal Loss (0.4)**: Focuses on hard-to-segment regions
+- **IoU Loss (0.3)**: Directly optimizes intersection-over-union
+- **Frequency Loss (0.1)**: Preserves fine details in trace patterns
+
+### Training Workflow
+
+1. **Initialize** base SAM 2.1 Hiera-Large model
+2. **Inject** LoRA adapters into target modules
+3. **Freeze** original SAM 2 weights
+4. **Train** only LoRA parameters and refinement layers
+5. **Validate** on held-out circuit images
+6. **Save** best checkpoint based on mIoU (mean Intersection over Union)
+
+### Refinement Layer
+
+A custom multi-scale refinement layer improves trace boundary detection:
+
+```python
+refinement_kernels = [3, 5, 7, 11]  # Multi-scale kernels
+kernel_channels = 2
+```
+
+This layer processes the mask at multiple scales to:
+- Smooth jagged edges
+- Fill small gaps in traces
+- Remove spurious noise
+
+## Model Integration
+
+The fine-tuned SAM 2 model is loaded in CircuitVision:
+
+```python
+# Load base model structure with LoRA
+self.sam2_model = get_modified_sam2(
+    model_cfg_path='models/configs/sam2.1_hiera_l.yaml',
+    checkpoint_path='models/SAM2/sam2.1_hiera_large.pt',
+    # ... LoRA config ...
+)
+
+# Load fine-tuned weights
+checkpoint = torch.load('models/SAM2/best_miou_model_SAM_latest.pth')
+self.sam2_model.load_state_dict(checkpoint['state_dict'])
+self.sam2_model.eval()
+```
+
+### Inference Process
+
+```python
+def segment_with_sam2(self, image_np_bgr):
+    # Convert to RGB and PIL format
+    image_np_rgb = cv2.cvtColor(image_np_bgr, cv2.COLOR_BGR2RGB)
+    image_pil = Image.fromarray(image_np_rgb)
+    
+    # Apply SAM 2 transforms
+    image_tensor = self.sam2_transforms(image_pil).unsqueeze(0).to(device)
+    
+    # Inference
+    with torch.no_grad():
+        high_res_mask, low_res_mask, _ = self.sam2_model(image_tensor)
+    
+    # Post-process to binary mask
+    final_mask = self.sam2_transforms.postprocess_masks(high_res_mask, orig_hw)
+    mask_binary = (final_mask > 0.0).numpy().astype(np.uint8) * 255
+    
+    return mask_binary
+```
+
+From `circuit_analyzer.py:321-379`
+
+## Performance Results
+
+### Accuracy Metrics
+
+<Card title="98.7% Segmentation Accuracy" icon="bullseye">
+Achieved on circuit trace segmentation from only 267 training images, demonstrating the effectiveness of LoRA fine-tuning for domain-specific tasks.
+</Card>
+
+- **Pixel Accuracy**: 98.7%
+- **Mean IoU (mIoU)**: High (checkpoint selection criterion)
+- **Inference Time**: Real-time on GPU
+- **Generalization**: Works on unseen circuit styles
+
+### Qualitative Results
+
+The SAM 2 model excels at:
+
+- **Trace continuity**: Preserves continuous conductive paths
+- **Fine details**: Captures thin traces and small connections
+- **Component exclusion**: Accurately segments around components (when combined with YOLO)
+- **Noise rejection**: Ignores text, annotations, and background elements
+
+## Intelligent Cropping Integration
+
+Before SAM 2 segmentation, CircuitVision performs **intelligent YOLO-based cropping**:
+
+1. **Detect components** with YOLO
+2. **Calculate bounding box** encompassing all components
+3. **Crop image** to focus on circuit area
+4. **Remove background noise** significantly
+5. **Apply SAM 2** to cropped region for better accuracy
+
+<Info>
+This two-stage approach (YOLO crop → SAM 2 segment) is a key innovation that boosts downstream accuracy in node and connection analysis.
+</Info>
+
+## Download Models
+
+To download the fine-tuned SAM 2 models:
+
+```bash
+python download_models.py
+```
+
+This creates `models/SAM2/` directory and downloads:
+- Base SAM 2.1 Hiera-Large checkpoint
+- Fine-tuned LoRA weights (`best_miou_model_SAM_latest.pth`)
+
+## Training Tips
+
+<Accordion title="Best Practices for SAM 2 Fine-Tuning">
+
+### Dataset Considerations
+- **Quality over quantity**: 267 high-quality annotations outperform 1000s of poor ones
+- **Mask precision**: Ensure binary masks accurately trace conductive paths
+- **Diversity**: Include various circuit types, drawing styles, and image qualities
+- **Validation split**: Hold out representative samples for unbiased evaluation
+
+### Hyperparameter Tuning
+- **LoRA rank**: Start with 4; increase if underfitting (more capacity)
+- **Dropout**: Use 0.2-0.4 for small datasets to prevent overfitting
+- **Loss weights**: Adjust based on dataset characteristics (e.g., increase focal if class imbalance)
+- **Learning rate**: Lower than full fine-tuning (typically 1e-4 to 1e-5)
+
+### Refinement Layer
+- Experiment with kernel sizes based on typical trace widths
+- More kernels = better multi-scale but slower inference
+- Tune `kernel_channels` for capacity vs. speed trade-off
+
+### Avoiding Overfitting
+- Monitor validation metrics closely
+- Use early stopping
+- Apply data augmentation (rotation, flip, brightness)
+- Keep LoRA rank low initially
+
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="YOLO Training" icon="eye" href="/training/yolo-training">
+    Learn about component detection training
+  </Card>
+  <Card title="Dataset Requirements" icon="database" href="/training/datasets">
+    Prepare your own circuit datasets
+  </Card>
+</CardGroup>
