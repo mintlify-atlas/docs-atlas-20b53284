@@ -1,0 +1,93 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "CircuitVision",
+  "projectDescription": "AI-powered tool that analyzes electrical circuit diagrams and generates SPICE netlists using fine-tuned YOLOv11, SAM 2.1, and Gemini.",
+  "theme": "aspen",
+  "primaryColor": "#3B82F6",
+  "lightColor": "#60A5FA",
+  "darkColor": "#1E40AF",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/pipeline-overview",
+              "concepts/component-detection",
+              "concepts/segmentation",
+              "concepts/topology-analysis",
+              "concepts/netlist-generation"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/installation",
+              "guides/docker-setup",
+              "guides/using-the-app",
+              "guides/api-keys"
+            ]
+          },
+          {
+            "group": "Model Training",
+            "pages": [
+              "training/yolo-training",
+              "training/sam2-training",
+              "training/datasets"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Classes",
+            "pages": [
+              "api/circuit-analyzer",
+              "api/analysis-pipeline"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/utils",
+              "api/sam2-inference",
+              "api/spice-simulator"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Fine-tuned YOLOv11 for high-precision component detection (93.13% mAP-50)",
+    "Custom-adapted SAM 2.1 for circuit segmentation (98.7% accuracy)",
+    "Intelligent cropping and topology analysis with custom algorithms",
+    "Gemini-powered OCR for component value extraction",
+    "SPICE-compatible netlist generation and DC/AC analysis",
+    "Interactive Streamlit web interface with visualization"
+  ],
+  "publicApiSurface": [
+    "CircuitAnalyzer",
+    "CircuitAnalyzer.bboxes()",
+    "CircuitAnalyzer.segment_with_sam2()",
+    "CircuitAnalyzer.get_node_connections()",
+    "CircuitAnalyzer.generate_netlist_from_nodes()",
+    "CircuitAnalyzer.crop_image_and_adjust_bboxes()",
+    "CircuitAnalyzer.enumerate_components()",
+    "process_new_upload()",
+    "run_initial_detection()",
+    "run_segmentation_and_cropping()",
+    "run_node_analysis()",
+    "run_initial_netlist_generation()",
+    "perform_dc_spice_analysis()",
+    "perform_ac_spice_analysis()"
+  ]
+}
